@@ -1,0 +1,264 @@
+PropertyHub SaaS - Complete Folder Structure
+=============================================
+
+PROJECT ROOT/
+│
+├── 📁 app/
+│   ├── 📁 (auth)                                 # AUTHENTICATION ROUTES (Public)
+│   │   ├── 📄 layout.tsx                         # Centered form layout
+│   │   │   └── Applies centered container styling to child pages
+│   │   ├── 📁 login/
+│   │   │   └── 📄 page.tsx                       # Login page (/login)
+│   │   │       ├── Email & password inputs
+│   │   │       └── "Sign up" link
+│   │   └── 📁 signup/
+│   │       └── 📄 page.tsx                       # Signup page (/signup)
+│   │           ├── Full name input
+│   │           ├── Email & password inputs
+│   │           ├── Role selector (Tenant/Landlord)
+│   │           └── "Login" link
+│   │
+│   ├── 📁 (landlord)                             # LANDLORD ROUTES (Protected)
+│   │   ├── 📄 layout.tsx                         # Sidebar + main area layout
+│   │   │   ├── Fixed left sidebar (w-64)
+│   │   │   ├── Navigation menu
+│   │   │   ├── Logo (links to dashboard)
+│   │   │   └── Profile/Logout buttons
+│   │   ├── 📁 dashboard/
+│   │   │   └── 📄 page.tsx                       # /landlord/dashboard
+│   │   │       ├── Stats cards (properties, tenants, income, maintenance)
+│   │   │       ├── Recent activity feed
+│   │   │       └── Quick action links
+│   │   ├── 📁 properties/
+│   │   │   ├── 📄 page.tsx                       # /landlord/properties
+│   │   │   │   ├── List all properties
+│   │   │   │   ├── Property cards with stats
+│   │   │   │   └── Add property button
+│   │   │   └── 📁 [id]/
+│   │   │       └── 📄 page.tsx                   # /landlord/properties/[id]
+│   │   │           ├── Property details
+│   │   │           ├── Unit management
+│   │   │           └── Quick stats sidebar
+│   │   ├── 📁 tenants/
+│   │   │   └── 📄 page.tsx                       # /landlord/tenants
+│   │   │       ├── Tenant list
+│   │   │       ├── Contact buttons
+│   │   │       └── Tenant details
+│   │   ├── 📁 maintenance/
+│   │   │   └── 📄 page.tsx                       # /landlord/maintenance
+│   │   │       ├── Maintenance requests by status
+│   │   │       ├── Filter by property/tenant
+│   │   │       └── Status update buttons
+│   │   └── 📁 payments/
+│   │       └── 📄 page.tsx                       # /landlord/payments
+│   │           ├── Payment summary cards
+│   │           ├── Payment history table
+│   │           └── Collection status
+│   │
+│   ├── 📁 (tenant)                               # TENANT ROUTES (Protected)
+│   │   ├── 📄 layout.tsx                         # Sidebar + main area layout
+│   │   │   ├── Fixed left sidebar (w-64)
+│   │   │   ├── Navigation menu
+│   │   │   ├── Logo (links to portal)
+│   │   │   └── Profile/Logout buttons
+│   │   ├── 📁 portal/
+│   │   │   └── 📄 page.tsx                       # /tenant/portal
+│   │   │       ├── Property information card
+│   │   │       ├── Rent status & due date
+│   │   │       ├── Quick action cards
+│   │   │       └── Recent activity feed
+│   │   ├── 📁 payments/
+│   │   │   └── 📄 page.tsx                       # /tenant/payments
+│   │   │       ├── Current rent due card
+│   │   │       ├── Pay rent button
+│   │   │       └── Payment history
+│   │   ├── 📁 maintenance/
+│   │   │   └── 📄 page.tsx                       # /tenant/maintenance
+│   │   │       ├── Submit new request form
+│   │   │       └── Request history
+│   │   ├── 📁 messages/
+│   │   │   └── 📄 page.tsx                       # /tenant/messages
+│   │   │       ├── Chat interface
+│   │   │       ├── Message history
+│   │   │       └── Input & send button
+│   │   └── 📁 lease/
+│   │       └── 📄 page.tsx                       # /tenant/lease
+│   │           ├── Lease details (dates, rent, deposit)
+│   │           └── Terms & conditions
+│   │
+│   ├── 📁 search/                                # PUBLIC SEARCH ROUTE
+│   │   └── 📄 page.tsx                           # /search
+│   │       ├── Search form (location, bedrooms, max rent)
+│   │       ├── Property grid
+│   │       └── Property cards with details
+│   │
+│   ├── 📄 layout.tsx                             # ROOT LAYOUT
+│   │   ├── HTML & body tags
+│   │   ├── Global metadata
+│   │   ├── Font setup
+│   │   └── Analytics wrapper
+│   │
+│   ├── 📄 page.tsx                               # LANDING PAGE (/)
+│   │   ├── Navigation bar
+│   │   ├── Hero section
+│   │   ├── Features section
+│   │   └── CTAs (Get Started, Browse Properties)
+│   │
+│   └── 📄 globals.css                            # GLOBAL STYLES
+│       └── Tailwind CSS + shadcn styles
+│
+├── 📁 components/
+│   └── 📁 ui/                                    # SHADCN/UI COMPONENTS (Pre-installed)
+│       ├── 📄 button.tsx
+│       ├── 📄 card.tsx
+│       ├── 📄 input.tsx
+│       ├── 📄 textarea.tsx
+│       ├── 📄 radio-group.tsx
+│       ├── 📄 alert.tsx
+│       ├── 📄 badge.tsx
+│       ├── 📄 dropdown-menu.tsx
+│       ├── 📄 label.tsx
+│       └── [... other components]
+│
+├── 📁 lib/
+│   ├── 📁 supabase/
+│   │   ├── 📄 client.ts                          # Client-side Supabase setup
+│   │   │   └── createClient() for browser
+│   │   └── 📄 server.ts                          # Server-side Supabase setup
+│   │       └── createServerClient() for API
+│   ├── 📁 auth/
+│   │   └── 📄 types.ts                           # Auth types & interfaces
+│   │       ├── UserRole: 'landlord' | 'tenant'
+│   │       ├── UserProfile interface
+│   │       └── AuthUser interface
+│   └── 📄 utils.ts                               # Utility functions
+│       └── cn() for className merging
+│
+├── 📁 public/                                    # STATIC ASSETS
+│   ├── 📄 icon-light-32x32.png
+│   ├── 📄 icon-dark-32x32.png
+│   ├── 📄 icon.svg
+│   └── 📄 apple-icon.png
+│
+├── 📄 middleware.ts                              # AUTHENTICATION ROUTING
+│   ├── Check authentication status
+│   ├── Route protection for /landlord & /tenant
+│   ├── Redirect to /login if unauthorized
+│   └── Role verification
+│
+├── 📄 .env.local                                 # ENVIRONMENT VARIABLES
+│   ├── NEXT_PUBLIC_SUPABASE_URL
+│   ├── NEXT_PUBLIC_SUPABASE_ANON_KEY
+│   └── SUPABASE_SERVICE_KEY
+│
+├── 📄 next.config.mjs                            # NEXT.JS CONFIG
+├── 📄 tailwind.config.ts                         # TAILWIND CSS CONFIG
+├── 📄 postcss.config.mjs                         # POSTCSS CONFIG
+├── 📄 tsconfig.json                              # TYPESCRIPT CONFIG
+├── 📄 package.json                               # DEPENDENCIES & SCRIPTS
+├── 📄 components.json                            # SHADCN CONFIG
+│
+├── 📄 PROJECT_STRUCTURE.md                       # Detailed structure guide
+├── 📄 LAYOUT_REFERENCE.md                        # Layout documentation
+├── 📄 QUICKSTART.md                              # Quick start guide
+└── 📄 FOLDER_TREE.txt                            # This file
+
+ROUTE HIERARCHY
+===============
+
+PUBLIC (No Auth)
+  /                          (Home page)
+  /login                     (Login form)
+  /signup                    (Sign up form)
+  /search                    (Property search)
+
+LANDLORD (Protected - role: landlord)
+  /landlord/dashboard        (Overview)
+  /landlord/properties       (All properties)
+  /landlord/properties/[id]  (Property details)
+  /landlord/tenants         (Tenant management)
+  /landlord/maintenance     (Maintenance tracking)
+  /landlord/payments        (Payment tracking)
+
+TENANT (Protected - role: tenant)
+  /tenant/portal            (Tenant dashboard)
+  /tenant/payments          (Payment management)
+  /tenant/maintenance       (Submit requests)
+  /tenant/messages          (Direct messaging)
+  /tenant/lease             (Lease details)
+
+LAYOUT NESTING
+==============
+
+Root Layout (applies to all routes)
+├── Auth Layout → /login, /signup
+├── Landlord Layout → /landlord/*
+├── Tenant Layout → /tenant/*
+└── Public Pages → /, /search (no parent layout)
+
+DATABASE SCHEMA NEEDED
+======================
+
+users
+  ├── id (UUID, PK)
+  ├── email (String, unique)
+  ├── role ('landlord' | 'tenant')
+  ├── full_name (String)
+  └── created_at (Timestamp)
+
+properties
+  ├── id (UUID, PK)
+  ├── landlord_id (FK → users)
+  ├── address (String)
+  ├── city (String)
+  ├── units (Integer)
+  ├── monthly_income (Decimal)
+  └── created_at (Timestamp)
+
+tenants
+  ├── id (UUID, PK)
+  ├── user_id (FK → users)
+  ├── property_id (FK → properties)
+  ├── lease_start (Date)
+  ├── lease_end (Date)
+  ├── monthly_rent (Decimal)
+  └── created_at (Timestamp)
+
+maintenance_requests
+  ├── id (UUID, PK)
+  ├── tenant_id (FK → users)
+  ├── property_id (FK → properties)
+  ├── issue_description (Text)
+  ├── status ('pending' | 'in_progress' | 'completed')
+  ├── created_at (Timestamp)
+  └── updated_at (Timestamp)
+
+payments
+  ├── id (UUID, PK)
+  ├── tenant_id (FK → users)
+  ├── property_id (FK → properties)
+  ├── amount (Decimal)
+  ├── status ('paid' | 'pending' | 'overdue')
+  ├── due_date (Date)
+  ├── paid_date (Date)
+  └── created_at (Timestamp)
+
+STYLING APPROACH
+================
+
+Framework: Tailwind CSS 4.2
+Component Library: shadcn/ui
+Design Tokens: CSS Variables in globals.css
+Colors:
+  - background, foreground (primary)
+  - card (card background)
+  - muted (secondary background)
+  - border (border color)
+  - primary, destructive (semantic)
+
+All responsive using Tailwind breakpoints:
+  - sm: 640px
+  - md: 768px
+  - lg: 1024px
+  - xl: 1280px
+
