@@ -1,188 +1,158 @@
-// app/api/payments/initiate/route.ts
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
+import { v4 as uuidv4 } from "uuid";
+import { registerIPN, submitOrder } from "@/lib/pesapal";
 
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
-import { NextResponse } from 'next/server'
-import { getPesapalToken } from '@/lib/pesapal'
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL!;
 
-export async function POST() {
-  const supabase = createRouteHandlerClient({ cookies })
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
-  // 1. Verify authenticated session
+export async function POST(req: NextRequest) {
+  const supabase = createRouteHandlerClient({ cookies });
+
+  // Auth check — tenant only
   const {
     data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession()
+  } = await supabase.auth.getSession();
 
-  if (sessionError || !session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const userId = session.user.id
+  const userId = session.user.id;
 
-  // 2. Verify role is tenant
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', userId)
-    .single()
+  // Verify user has tenant role
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .single();
 
-  if (profileError || profile?.role !== 'tenant') {
-    return NextResponse.json({ error: 'Forbidden: tenants only' }, { status: 403 })
+  if (!profile || profile.role !== "tenant") {
+    return NextResponse.json({ error: "Forbidden: tenants only" }, { status: 403 });
   }
 
-  // 3. Fetch active tenancy
+  // Parse body
+  let body: {
+    tenancy_id: string;
+    amount: number;
+    period_month: number;
+    period_year: number;
+  };
+
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { tenancy_id, amount, period_month, period_year } = body;
+
+  if (!tenancy_id || !amount || !period_month || !period_year) {
+    return NextResponse.json(
+      { error: "Missing required fields: tenancy_id, amount, period_month, period_year" },
+      { status: 400 }
+    );
+  }
+
+  // Fetch tenancy + property + tenant details, verify ownership
   const { data: tenancy, error: tenancyError } = await supabase
-    .from('tenancies')
-    .select(`
+    .from("tenancies")
+    .select(
+      `
       id,
-      monthly_rent,
-      due_day,
-      unit_id,
+      unit:units (
+        id,
+        unit_number,
+        property:properties ( id, name )
+      ),
       tenant:profiles!tenancies_tenant_id_fkey (
         id,
-        full_name,
-        email,
-        phone
+        first_name,
+        last_name,
+        email
       )
-    `)
-    .eq('tenant_id', userId)
-    .eq('status', 'active')
-    .single()
+    `
+    )
+    .eq("id", tenancy_id)
+    .eq("tenant_id", userId)
+    .eq("status", "active")
+    .single();
 
   if (tenancyError || !tenancy) {
-    return NextResponse.json({ error: 'No active tenancy found' }, { status: 404 })
-  }
-
-  const tenant = tenancy.tenant as {
-    id: string
-    full_name: string
-    email: string
-    phone: string
-  }
-
-  // 4. Derive payment month
-  const now = new Date()
-  const paymentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const dueDate = new Date(now.getFullYear(), now.getMonth(), tenancy.due_day)
-
-  // 5. Check no duplicate pending/completed payment this month
-  const { data: existing } = await supabase
-    .from('rent_payments')
-    .select('id, status')
-    .eq('tenancy_id', tenancy.id)
-    .eq('payment_month', paymentMonth)
-    .in('status', ['pending', 'completed'])
-    .maybeSingle()
-
-  if (existing?.status === 'completed') {
     return NextResponse.json(
-      { error: `Rent for ${paymentMonth} already paid` },
-      { status: 409 }
-    )
+      { error: "Tenancy not found or not active" },
+      { status: 404 }
+    );
   }
 
-  // 6. Register IPN URL with Pesapal (idempotent — reuse if already registered)
-  const token = await getPesapalToken()
+  const property = (tenancy.unit as any)?.property;
+  const unit = tenancy.unit as any;
+  const tenant = tenancy.tenant as any;
+  const monthName = MONTH_NAMES[period_month - 1];
 
-  const ipnUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/webhook`
+  const description = `Rent payment - ${property?.name ?? "Property"} Unit ${unit?.unit_number ?? ""} ${monthName} ${period_year}`;
+  const internalOrderId = uuidv4();
 
-  // Register IPN
-  const ipnRes = await fetch(`${process.env.PESAPAL_BASE_URL}/api/URLSetup/RegisterIPN`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({
-      url: ipnUrl,
-      ipn_notification_type: 'POST',
-    }),
-  })
+  try {
+    // Register IPN URL
+    const ipnUrl = `${APP_URL}/api/payments/ipn`;
+    const notificationId = await registerIPN(ipnUrl);
 
-  if (!ipnRes.ok) {
-    const errText = await ipnRes.text()
-    return NextResponse.json(
-      { error: `IPN registration failed: ${errText}` },
-      { status: 502 }
-    )
-  }
-
-  const ipnData = await ipnRes.json()
-  const ipnId = ipnData.ipn_id
-
-  // 7. Create a merchant reference
-  const merchantReference = `RENT-${tenancy.id}-${paymentMonth}-${Date.now()}`
-
-  // 8. Submit order to Pesapal
-  const orderPayload = {
-    id: merchantReference,
-    currency: 'UGX',
-    amount: tenancy.monthly_rent,
-    description: `Rent payment for ${paymentMonth}`,
-    callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/payments/callback`,
-    notification_id: ipnId,
-    billing_address: {
-      email_address: tenant.email,
-      phone_number: tenant.phone ?? '',
-      first_name: tenant.full_name?.split(' ')[0] ?? '',
-      last_name: tenant.full_name?.split(' ').slice(1).join(' ') ?? '',
-      country_code: 'UG',
-    },
-  }
-
-  const orderRes = await fetch(
-    `${process.env.PESAPAL_BASE_URL}/api/Transactions/SubmitOrderRequest`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+    // Submit order to Pesapal
+    const orderResponse = await submitOrder({
+      id: internalOrderId,
+      currency: "UGX",
+      amount,
+      description,
+      callbackUrl: `${APP_URL}/tenant/payments/callback`,
+      notificationId,
+      billingAddress: {
+        email_address: tenant.email,
+        first_name: tenant.first_name,
+        last_name: tenant.last_name,
       },
-      body: JSON.stringify(orderPayload),
+    });
+
+    // Persist pending payment record
+    const { error: insertError } = await supabase
+      .from("rent_payments")
+      .insert({
+        id: internalOrderId,
+        tenancy_id,
+        tenant_id: userId,
+        amount,
+        currency: "UGX",
+        period_month,
+        period_year,
+        description,
+        status: "pending",
+        pesapal_order_id: orderResponse.order_tracking_id,
+        pesapal_merchant_reference: orderResponse.merchant_reference,
+        created_at: new Date().toISOString(),
+      });
+
+    if (insertError) {
+      console.error("DB insert error:", insertError);
+      return NextResponse.json(
+        { error: "Failed to record payment initiation" },
+        { status: 500 }
+      );
     }
-  )
 
-  if (!orderRes.ok) {
-    const errText = await orderRes.text()
+    return NextResponse.json({
+      redirect_url: orderResponse.redirect_url,
+      order_tracking_id: orderResponse.order_tracking_id,
+    });
+  } catch (err) {
+    console.error("Payment initiation error:", err);
     return NextResponse.json(
-      { error: `Pesapal order failed: ${errText}` },
-      { status: 502 }
-    )
+      { error: err instanceof Error ? err.message : "Payment initiation failed" },
+      { status: 500 }
+    );
   }
-
-  const orderData = await orderRes.json()
-
-  if (orderData.status !== '200') {
-    return NextResponse.json(
-      { error: `Pesapal error: ${orderData.message}` },
-      { status: 502 }
-    )
-  }
-
-  // 9. Create rent_payment record
-  const { error: insertError } = await supabase.from('rent_payments').upsert(
-    {
-      ...(existing?.id ? { id: existing.id } : {}),
-      tenancy_id: tenancy.id,
-      tenant_id: userId,
-      amount: tenancy.monthly_rent,
-      currency: 'UGX',
-      payment_month: paymentMonth,
-      due_date: dueDate.toISOString().split('T')[0],
-      status: 'pending',
-      merchant_reference: merchantReference,
-      pesapal_order_tracking_id: orderData.order_tracking_id,
-    },
-    { onConflict: 'merchant_reference' }
-  )
-
-  if (insertError) {
-    console.error('DB insert error:', insertError)
-    return NextResponse.json({ error: 'Failed to record payment' }, { status: 500 })
-  }
-
-  return NextResponse.json({ redirectUrl: orderData.redirect_url })
 }

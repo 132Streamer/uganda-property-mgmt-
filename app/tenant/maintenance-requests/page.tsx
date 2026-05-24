@@ -1,27 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import * as z from 'zod'
+import { useEffect, useState, useRef } from 'react'
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -29,15 +14,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { FileUploader } from '@/components/file-uploader'
-import { toast } from 'sonner'
+import { toast } from '@/components/ui/use-toast'
+import { Loader2, UploadCloud, X, PlusCircle, ClipboardList } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { formatDistanceToNow } from 'date-fns'
-import { Loader2, PlusCircle, Wrench } from 'lucide-react'
 
-type Priority = 'low' | 'medium' | 'high' | 'emergency'
-type Status = 'open' | 'in_progress' | 'resolved'
+type Priority = 'Low' | 'Medium' | 'High' | 'Urgent'
+type Status = 'Open' | 'In Progress' | 'Resolved'
 
 interface MaintenanceRequest {
   id: string
@@ -45,249 +36,334 @@ interface MaintenanceRequest {
   description: string
   priority: Priority
   status: Status
-  images: string[]
+  photo_url: string | null
   created_at: string
   updated_at: string
+  property: {
+    id: string
+    name: string
+    address: string
+  }
 }
 
-const formSchema = z.object({
-  title: z.string().min(5, 'Title must be at least 5 characters').max(100),
-  description: z.string().min(10, 'Description must be at least 10 characters').max(1000),
-  priority: z.enum(['low', 'medium', 'high', 'emergency']),
-})
-
-type FormValues = z.infer<typeof formSchema>
-
-const priorityConfig: Record<Priority, { label: string; variant: 'outline' | 'secondary' | 'destructive' | 'default' }> = {
-  low: { label: 'Low', variant: 'outline' },
-  medium: { label: 'Medium', variant: 'secondary' },
-  high: { label: 'High', variant: 'default' },
-  emergency: { label: 'Emergency', variant: 'destructive' },
+interface Property {
+  id: string
+  name: string
+  address: string
 }
 
-const statusConfig: Record<Status, { label: string; className: string }> = {
-  open: { label: 'Open', className: 'bg-yellow-100 text-yellow-800 border-yellow-200' },
-  in_progress: { label: 'In Progress', className: 'bg-blue-100 text-blue-800 border-blue-200' },
-  resolved: { label: 'Resolved', className: 'bg-green-100 text-green-800 border-green-200' },
+const PRIORITY_CONFIG: Record<Priority, { label: string; className: string }> = {
+  Low: { label: 'Low', className: 'bg-slate-100 text-slate-700 border-slate-200' },
+  Medium: { label: 'Medium', className: 'bg-blue-50 text-blue-700 border-blue-200' },
+  High: { label: 'High', className: 'bg-orange-50 text-orange-700 border-orange-200' },
+  Urgent: { label: 'Urgent', className: 'bg-red-50 text-red-700 border-red-200' },
+}
+
+const STATUS_CONFIG: Record<Status, { label: string; className: string }> = {
+  Open: { label: 'Open', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+  'In Progress': { label: 'In Progress', className: 'bg-blue-50 text-blue-700 border-blue-200' },
+  Resolved: { label: 'Resolved', className: 'bg-green-50 text-green-700 border-green-200' },
 }
 
 export default function TenantMaintenancePage() {
-  const [requests, setRequests] = useState<MaintenanceRequest[]>([])
-  const [loading, setLoading] = useState(true)
+  const supabase = createClientComponentClient()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Form state
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [priority, setPriority] = useState<Priority | ''>('')
+  const [propertyId, setPropertyId] = useState('')
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [uploadedImages, setUploadedImages] = useState<string[]>([])
-  const [showForm, setShowForm] = useState(false)
 
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      title: '',
-      description: '',
-      priority: 'medium',
-    },
-  })
+  // Data state
+  const [requests, setRequests] = useState<MaintenanceRequest[]>([])
+  const [properties, setProperties] = useState<Property[]>([])
+  const [loading, setLoading] = useState(true)
 
-  async function fetchRequests() {
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  async function fetchData() {
+    setLoading(true)
     try {
+      // Fetch tenant's active lease properties
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const { data: leases } = await supabase
+        .from('leases')
+        .select('property:properties!property_id (id, name, address)')
+        .eq('tenant_id', session.user.id)
+        .eq('status', 'active')
+
+      const props = (leases?.map((l: any) => l.property) ?? []) as Property[]
+      setProperties(props)
+
+      if (props.length === 1) setPropertyId(props[0].id)
+
+      // Fetch requests
       const res = await fetch('/api/maintenance')
       const json = await res.json()
-      if (!res.ok) throw new Error(json.error)
-      setRequests(json.data)
-    } catch (err) {
-      toast.error('Failed to load requests')
+      if (json.data) setRequests(json.data)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => {
-    fetchRequests()
-  }, [])
+  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: 'File too large', description: 'Max 5MB.', variant: 'destructive' })
+      return
+    }
+    setPhotoFile(file)
+    setPhotoPreview(URL.createObjectURL(file))
+  }
 
-  async function onSubmit(values: FormValues) {
+  function clearPhoto() {
+    setPhotoFile(null)
+    setPhotoPreview(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  async function uploadPhoto(file: File): Promise<string> {
+    const ext = file.name.split('.').pop()
+    const path = `maintenance/${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('uploads').upload(path, file)
+    if (error) throw error
+    const { data } = supabase.storage.from('uploads').getPublicUrl(path)
+    return data.publicUrl
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!title || !description || !priority || !propertyId) {
+      toast({ title: 'Fill in all required fields', variant: 'destructive' })
+      return
+    }
+
     setSubmitting(true)
     try {
+      let photo_url: string | null = null
+      if (photoFile) {
+        photo_url = await uploadPhoto(photoFile)
+      }
+
       const res = await fetch('/api/maintenance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...values, images: uploadedImages }),
+        body: JSON.stringify({ title, description, priority, property_id: propertyId, photo_url }),
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error)
 
-      toast.success('Request submitted')
-      form.reset()
-      setUploadedImages([])
-      setShowForm(false)
-      fetchRequests()
+      const json = await res.json()
+
+      if (!res.ok) {
+        throw new Error(json.error ?? 'Submission failed')
+      }
+
+      toast({ title: 'Request submitted', description: 'Your landlord has been notified.' })
+
+      // Reset form
+      setTitle('')
+      setDescription('')
+      setPriority('')
+      if (properties.length !== 1) setPropertyId('')
+      clearPhoto()
+
+      // Refresh list
+      await fetchData()
     } catch (err: any) {
-      toast.error(err.message ?? 'Submission failed')
+      toast({ title: 'Error', description: err.message, variant: 'destructive' })
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div className="container mx-auto max-w-3xl py-10 px-4 space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Wrench className="h-6 w-6 text-muted-foreground" />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Maintenance</h1>
-            <p className="text-sm text-muted-foreground">Submit and track repair requests</p>
-          </div>
-        </div>
-        <Button onClick={() => setShowForm((v) => !v)} variant={showForm ? 'outline' : 'default'}>
-          <PlusCircle className="h-4 w-4 mr-2" />
-          {showForm ? 'Cancel' : 'New Request'}
-        </Button>
-      </div>
+    <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
+      {/* ── Submit Form ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PlusCircle className="h-5 w-5 text-primary" />
+            Submit Maintenance Request
+          </CardTitle>
+          <CardDescription>
+            Describe the issue and we'll notify your landlord immediately.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Property */}
+            {properties.length > 1 && (
+              <div className="space-y-1.5">
+                <Label htmlFor="property">Property <span className="text-destructive">*</span></Label>
+                <Select value={propertyId} onValueChange={setPropertyId}>
+                  <SelectTrigger id="property">
+                    <SelectValue placeholder="Select property" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {properties.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} — {p.address}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
-      {/* Form */}
-      {showForm && (
-        <Card>
-          <CardHeader>
-            <CardTitle>New Request</CardTitle>
-            <CardDescription>Describe the issue and we'll get it sorted.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
-                <FormField
-                  control={form.control}
-                  name="title"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Title</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g. Leaking kitchen tap" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+            {/* Title */}
+            <div className="space-y-1.5">
+              <Label htmlFor="title">Title <span className="text-destructive">*</span></Label>
+              <Input
+                id="title"
+                placeholder="e.g. Leaking kitchen tap"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={120}
+              />
+            </div>
 
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Description</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Describe the issue in detail..."
-                          className="resize-none min-h-[100px]"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+            {/* Description */}
+            <div className="space-y-1.5">
+              <Label htmlFor="description">Description <span className="text-destructive">*</span></Label>
+              <Textarea
+                id="description"
+                placeholder="Describe the issue in detail — when it started, how severe it is, etc."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                maxLength={1000}
+              />
+              <p className="text-xs text-muted-foreground text-right">{description.length}/1000</p>
+            </div>
 
-                <FormField
-                  control={form.control}
-                  name="priority"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Priority</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select priority" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="low">Low — Not urgent</SelectItem>
-                          <SelectItem value="medium">Medium — Needs attention</SelectItem>
-                          <SelectItem value="high">High — Affects daily use</SelectItem>
-                          <SelectItem value="emergency">Emergency — Safety risk</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+            {/* Priority */}
+            <div className="space-y-1.5">
+              <Label htmlFor="priority">Priority <span className="text-destructive">*</span></Label>
+              <Select value={priority} onValueChange={(v) => setPriority(v as Priority)}>
+                <SelectTrigger id="priority">
+                  <SelectValue placeholder="Select priority" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(['Low', 'Medium', 'High', 'Urgent'] as Priority[]).map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-                <div className="space-y-2">
-                  <FormLabel>Photos (optional)</FormLabel>
-                  <FileUploader
-                    accept={{ 'image/*': [] }}
-                    maxFiles={5}
-                    maxSize={5 * 1024 * 1024}
-                    onUploadComplete={(urls: string[]) => setUploadedImages(urls)}
+            {/* Photo Upload */}
+            <div className="space-y-1.5">
+              <Label>Photo (optional)</Label>
+              {photoPreview ? (
+                <div className="relative w-40 h-40 rounded-md overflow-hidden border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={clearPhoto}
+                    className="absolute top-1 right-1 bg-background/80 rounded-full p-0.5 hover:bg-background"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="flex flex-col items-center justify-center border-2 border-dashed rounded-md h-28 cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <UploadCloud className="h-6 w-6 text-muted-foreground mb-1" />
+                  <span className="text-sm text-muted-foreground">Click to upload — max 5MB</span>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handlePhotoChange}
                   />
                 </div>
+              )}
+            </div>
 
-                <Button type="submit" disabled={submitting} className="w-full">
-                  {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Submit Request
-                </Button>
-              </form>
-            </Form>
-          </CardContent>
-        </Card>
-      )}
+            <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {submitting ? 'Submitting…' : 'Submit Request'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
       <Separator />
 
-      {/* Request list */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-medium">Your Requests</h2>
+      {/* ── Past Requests ── */}
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <ClipboardList className="h-5 w-5 text-primary" />
+          My Requests
+        </h2>
 
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : requests.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground text-sm">
-            No requests yet. Submit one above.
-          </div>
+          <p className="text-muted-foreground text-sm text-center py-12">No requests yet.</p>
         ) : (
           <div className="space-y-3">
             {requests.map((req) => (
-              <Card key={req.id}>
-                <CardContent className="pt-5 pb-4">
-                  <div className="flex items-start justify-between gap-4">
+              <Card key={req.id} className="transition-shadow hover:shadow-md">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                     <div className="space-y-1 flex-1 min-w-0">
                       <p className="font-medium truncate">{req.title}</p>
                       <p className="text-sm text-muted-foreground line-clamp-2">{req.description}</p>
                       <p className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
+                        {req.property.name} · {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
                       </p>
                     </div>
-                    <div className="flex flex-col items-end gap-2 shrink-0">
-                      <Badge variant={priorityConfig[req.priority].variant}>
-                        {priorityConfig[req.priority].label}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Badge
+                        variant="outline"
+                        className={cn('text-xs', PRIORITY_CONFIG[req.priority].className)}
+                      >
+                        {req.priority}
                       </Badge>
                       <Badge
                         variant="outline"
-                        className={statusConfig[req.status].className}
+                        className={cn('text-xs', STATUS_CONFIG[req.status].className)}
                       >
-                        {statusConfig[req.status].label}
+                        {req.status}
                       </Badge>
                     </div>
                   </div>
-                  {req.images.length > 0 && (
-                    <div className="mt-3 flex gap-2 flex-wrap">
-                      {req.images.map((url, i) => (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          key={i}
-                          src={url}
-                          alt={`Attachment ${i + 1}`}
-                          className="h-16 w-16 object-cover rounded-md border"
-                        />
-                      ))}
-                    </div>
+                  {req.photo_url && (
+                    <a
+                      href={req.photo_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block mt-3"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={req.photo_url}
+                        alt="Attachment"
+                        className="h-20 rounded-md object-cover border hover:opacity-90 transition-opacity"
+                      />
+                    </a>
                   )}
                 </CardContent>
               </Card>
             ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   )
 }
