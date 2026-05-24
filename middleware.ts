@@ -1,10 +1,9 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse, type NextRequest } from "next/server";
+import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  })
+  const { pathname } = request.nextUrl;
+  const response = NextResponse.next();
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,93 +11,48 @@ export async function middleware(request: NextRequest) {
     {
       cookies: {
         getAll() {
-          return request.cookies.getAll()
+          return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
+        setAll(cookiesToSet: { name: any; value: any; options: any; }[]) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
         },
       },
     }
-  )
+  );
 
   const {
     data: { user },
-  } = await supabase.auth.getUser()
+  } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl
-
-  // Public routes — always allow
-  if (pathname === '/' || pathname === '/search' || pathname.startsWith('/search/')) {
-    return supabaseResponse
-  }
-
-  // Auth routes — redirect to dashboard if already logged in
-  if (pathname === '/login' || pathname === '/signup') {
-    if (user) {
-      const role = await getUserRole(supabase, user.id)
-      const dashboard = role === 'landlord' ? '/landlord/dashboard' : '/tenant/dashboard'
-      return NextResponse.redirect(new URL(dashboard, request.url))
-    }
-    return supabaseResponse
-  }
-
-  // All other routes require authentication
+  // Unauthenticated — redirect to login
   if (!user) {
-    const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('redirectTo', pathname)
-    return NextResponse.redirect(loginUrl)
+    const isProtected =
+      pathname.startsWith("/landlord") || pathname.startsWith("/tenant");
+    if (isProtected) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("redirectTo", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+    return response;
   }
 
-  // Role-protected routes
-  if (pathname.startsWith('/landlord/') || pathname.startsWith('/tenant/')) {
-    const role = await getUserRole(supabase, user.id)
+  const role = user.user_metadata?.role as string | undefined;
 
-    if (!role) {
-      // Profile missing — kick to login
-      return NextResponse.redirect(new URL('/login', request.url))
-    }
-
-    if (pathname.startsWith('/landlord/') && role !== 'landlord') {
-      return NextResponse.redirect(new URL('/unauthorized', request.url))
-    }
-
-    if (pathname.startsWith('/tenant/') && role !== 'tenant') {
-      return NextResponse.redirect(new URL('/unauthorized', request.url))
-    }
+  // Landlord routes — tenant blocked
+  if (pathname.startsWith("/landlord") && role !== "landlord") {
+    return NextResponse.redirect(new URL("/tenant/portal", request.url));
   }
 
-  return supabaseResponse
-}
+  // Tenant routes — landlord blocked
+  if (pathname.startsWith("/tenant") && role !== "tenant") {
+    return NextResponse.redirect(new URL("/landlord/dashboard", request.url));
+  }
 
-async function getUserRole(
-  supabase: ReturnType<typeof createServerClient>,
-  userId: string
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', userId)
-    .single()
-
-  if (error || !data) return null
-  return data.role
+  return response;
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization)
-     * - favicon.ico
-     * - public assets (svg, png, jpg, etc.)
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
-}
+  matcher: ["/landlord/:path*", "/tenant/:path*"],
+};

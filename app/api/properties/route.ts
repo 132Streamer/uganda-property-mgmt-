@@ -1,79 +1,97 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 
-// ─── GET /api/properties ──────────────────────────────────────────────────────
-// Public. Supports ?district=&min_price=&max_price=&bedrooms=
+const PropertySchema = z.object({
+  title: z.string().min(1, 'Title is required'),
+  description: z.string().optional(),
+  district: z.string().min(1, 'District is required'),
+  address: z.string().min(1, 'Address is required'),
+  rent_ugx: z.number().positive('Rent must be positive'),
+  bedrooms: z.number().int().min(0),
+  bathrooms: z.number().int().min(0),
+  property_type: z.enum(['apartment', 'house', 'studio', 'commercial', 'land']),
+  status: z.enum(['available', 'occupied', 'maintenance']).default('available'),
+  amenities: z.array(z.string()).optional().default([]),
+  photos: z.array(z.string().url()).optional().default([]),
+})
+
+function createSupabaseClient() {
+  const cookieStore = cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        async get(name: string) { return (await cookieStore).get(name)?.value },
+        async set(name: string, value: string, options: Record<string, unknown>) { (await cookieStore).set({ name, value, ...options }) },
+        async remove(name: string, options: Record<string, unknown>) { (await cookieStore).set({ name, value: '', ...options }) },
+      },
+    }
+  )
+}
+
 export async function GET(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
-  const { searchParams } = new URL(request.url)
+  const supabase = createSupabaseClient()
 
-  const district  = searchParams.get('district')
-  const minPrice  = searchParams.get('min_price')
-  const maxPrice  = searchParams.get('max_price')
-  const bedrooms  = searchParams.get('bedrooms')
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { searchParams } = new URL(request.url)
+  const status = searchParams.get('status')
+  const district = searchParams.get('district')
+  const page = parseInt(searchParams.get('page') ?? '1')
+  const limit = parseInt(searchParams.get('limit') ?? '20')
+  const offset = (page - 1) * limit
 
   let query = supabase
     .from('properties')
-    .select('*')
-    .neq('status', 'unavailable')
+    .select('*, units(count)', { count: 'exact' })
+    .eq('landlord_id', user.id)
     .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
 
-  if (district)             query = query.eq('district', district)
-  if (minPrice)             query = query.gte('price_ugx', Number(minPrice))
-  if (maxPrice)             query = query.lte('price_ugx', Number(maxPrice))
-  if (bedrooms)             query = query.eq('bedrooms', Number(bedrooms))
+  if (status) query = query.eq('status', status)
+  if (district) query = query.ilike('district', `%${district}%`)
 
-  const { data, error } = await query
+  const { data, error, count } = await query
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ data })
+  return NextResponse.json({
+    data,
+    pagination: { page, limit, total: count ?? 0, pages: Math.ceil((count ?? 0) / limit) },
+  })
 }
 
-// ─── POST /api/properties ─────────────────────────────────────────────────────
-// Landlord only. Body: { title, description, location, district, price_ugx, bedrooms, bathrooms }
 export async function POST(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createSupabaseClient()
 
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) {
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Verify landlord role
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', session.user.id)
-    .single()
-
-  if (profile?.role !== 'landlord') {
-    return NextResponse.json({ error: 'Forbidden: landlords only' }, { status: 403 })
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const body = await request.json()
-  const { title, description, location, district, price_ugx, bedrooms, bathrooms } = body
-
-  if (!title || !location || !district || !price_ugx || bedrooms == null || bathrooms == null) {
-    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+  const parsed = PropertySchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 422 })
   }
 
   const { data, error } = await supabase
     .from('properties')
-    .insert({
-      title,
-      description,
-      location,
-      district,
-      price_ugx: Number(price_ugx),
-      bedrooms:  Number(bedrooms),
-      bathrooms: Number(bathrooms),
-      landlord_id: session.user.id,
-      status: 'available',
-    })
+    .insert({ ...parsed.data, landlord_id: user.id })
     .select()
     .single()
 
@@ -82,99 +100,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ data }, { status: 201 })
-}
-
-// ─── PATCH /api/properties ────────────────────────────────────────────────────
-// Landlord only, must own the property. Body: { id, ...fields }
-export async function PATCH(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
-
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const body = await request.json()
-  const { id, ...updates } = body
-
-  if (!id) {
-    return NextResponse.json({ error: 'Property id required' }, { status: 400 })
-  }
-
-  // Ownership check
-  const { data: property } = await supabase
-    .from('properties')
-    .select('landlord_id')
-    .eq('id', id)
-    .single()
-
-  if (!property) {
-    return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-  }
-  if (property.landlord_id !== session.user.id) {
-    return NextResponse.json({ error: 'Forbidden: not your property' }, { status: 403 })
-  }
-
-  // Whitelist editable fields
-  const allowed = ['title', 'description', 'location', 'district', 'price_ugx', 'bedrooms', 'bathrooms', 'status']
-  const safeUpdates: Record<string, unknown> = {}
-  for (const key of allowed) {
-    if (key in updates) safeUpdates[key] = updates[key]
-  }
-
-  const { data, error } = await supabase
-    .from('properties')
-    .update({ ...safeUpdates, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select()
-    .single()
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  return NextResponse.json({ data })
-}
-
-// ─── DELETE /api/properties ───────────────────────────────────────────────────
-// Soft delete — sets status to 'unavailable'. Body: { id }
-export async function DELETE(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
-
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const body = await request.json()
-  const { id } = body
-
-  if (!id) {
-    return NextResponse.json({ error: 'Property id required' }, { status: 400 })
-  }
-
-  // Ownership check
-  const { data: property } = await supabase
-    .from('properties')
-    .select('landlord_id')
-    .eq('id', id)
-    .single()
-
-  if (!property) {
-    return NextResponse.json({ error: 'Property not found' }, { status: 404 })
-  }
-  if (property.landlord_id !== session.user.id) {
-    return NextResponse.json({ error: 'Forbidden: not your property' }, { status: 403 })
-  }
-
-  const { error } = await supabase
-    .from('properties')
-    .update({ status: 'unavailable', updated_at: new Date().toISOString() })
-    .eq('id', id)
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-
-  return NextResponse.json({ message: 'Property removed' })
 }

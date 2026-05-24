@@ -1,136 +1,96 @@
-import { createClient } from '@supabase/supabase-js'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const BUCKET = 'property-photos'
 
-const BUCKET_CONFIG = {
-  'property-images': {
-    allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-    maxBytes: 5 * 1024 * 1024, // 5 MB
-    public: true,
-  },
-  'lease-documents': {
-    allowedTypes: ['application/pdf'],
-    maxBytes: 20 * 1024 * 1024, // 20 MB
-    public: false,
-  },
-} as const
-
-type Bucket = keyof typeof BUCKET_CONFIG
-
-const SIGNED_URL_EXPIRES_IN = 60 * 60 // 1 hour
-
-// ─── Supabase (service role — bypasses RLS for server-side upload) ────────────
-
-function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-
-  if (!url || !key) {
-    throw new Error('Missing Supabase env vars')
-  }
-
-  return createClient(url, key, {
-    auth: { persistSession: false },
-  })
+async function createSupabaseClient() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) { return cookieStore.get(name)?.value },
+        set(name: string, value: string, options: Record<string, unknown>) { cookieStore.set({ name, value, ...options }) },
+        remove(name: string, options: Record<string, unknown>) { cookieStore.set({ name, value: '', ...options }) },
+      },
+    }
+  )
 }
 
-// ─── Validation ───────────────────────────────────────────────────────────────
+export async function POST(request: NextRequest) {
+  const supabase = await createSupabaseClient()
 
-function validateBucket(value: string | null): Bucket {
-  if (!value || !(value in BUCKET_CONFIG)) {
-    throw new ValidationError(
-      `Invalid bucket. Must be one of: ${Object.keys(BUCKET_CONFIG).join(', ')}`,
-    )
-  }
-  return value as Bucket
-}
-
-function validateFile(file: File, bucket: Bucket): void {
-  const config = BUCKET_CONFIG[bucket]
-
-  if (!config.allowedTypes.includes(file.type as never)) {
-    throw new ValidationError(
-      `File type "${file.type}" not allowed for bucket "${bucket}". ` +
-        `Allowed: ${config.allowedTypes.join(', ')}`,
-    )
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  if (file.size > config.maxBytes) {
-    const maxMB = config.maxBytes / (1024 * 1024)
-    throw new ValidationError(
-      `File exceeds ${maxMB} MB limit (got ${(file.size / 1024 / 1024).toFixed(2)} MB)`,
-    )
-  }
-}
-
-class ValidationError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ValidationError'
-  }
-}
-
-// ─── Handler ──────────────────────────────────────────────────────────────────
-
-export async function POST(req: NextRequest) {
+  let formData: FormData
   try {
-    const formData = await req.formData()
-
-    const bucketParam = formData.get('bucket')
-    const file = formData.get('file')
-
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
-    }
-
-    const bucket = validateBucket(typeof bucketParam === 'string' ? bucketParam : null)
-    validateFile(file, bucket)
-
-    const supabase = getSupabaseAdmin()
-    const config = BUCKET_CONFIG[bucket]
-
-    // Unique path to prevent collisions
-    const ext = file.name.split('.').pop()
-    const filename = `${Date.now()}-${crypto.randomUUID()}.${ext}`
-
-    const { error: uploadError } = await supabase.storage
-      .from(bucket)
-      .upload(filename, file, {
-        contentType: file.type,
-        upsert: false,
-      })
-
-    if (uploadError) {
-      console.error('Supabase upload error:', uploadError)
-      return NextResponse.json({ error: 'Upload failed' }, { status: 500 })
-    }
-
-    // Public bucket → public URL; private bucket → signed URL
-    if (config.public) {
-      const { data } = supabase.storage.from(bucket).getPublicUrl(filename)
-      return NextResponse.json({ url: data.publicUrl, path: filename })
-    } else {
-      const { data, error: signedError } = await supabase.storage
-        .from(bucket)
-        .createSignedUrl(filename, SIGNED_URL_EXPIRES_IN)
-
-      if (signedError || !data) {
-        return NextResponse.json({ error: 'Failed to generate signed URL' }, { status: 500 })
-      }
-
-      return NextResponse.json({
-        url: data.signedUrl,
-        path: filename,
-        expiresIn: SIGNED_URL_EXPIRES_IN,
-      })
-    }
-  } catch (err) {
-    if (err instanceof ValidationError) {
-      return NextResponse.json({ error: err.message }, { status: 422 })
-    }
-
-    console.error('Unexpected upload error:', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    formData = await request.formData()
+  } catch {
+    return NextResponse.json({ error: 'Invalid form data' }, { status: 400 })
   }
+
+  const file = formData.get('file') as File | null
+  if (!file) {
+    return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+  }
+
+  if (!ALLOWED_TYPES.includes(file.type)) {
+    return NextResponse.json({
+      error: `File type not allowed. Accepted: jpeg, png, webp`,
+    }, { status: 415 })
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    return NextResponse.json({ error: 'File exceeds 5MB limit' }, { status: 413 })
+  }
+
+  const ext = file.type.split('/')[1].replace('jpeg', 'jpg')
+  const filename = `${user.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+
+  const arrayBuffer = await file.arrayBuffer()
+  const buffer = new Uint8Array(arrayBuffer)
+
+  const { error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(filename, buffer, {
+      contentType: file.type,
+      cacheControl: '3600',
+      upsert: false,
+    })
+
+  if (uploadError) {
+    return NextResponse.json({ error: uploadError.message }, { status: 500 })
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from(BUCKET)
+    .getPublicUrl(filename)
+
+  return NextResponse.json({ url: publicUrl, path: filename }, { status: 201 })
+}
+
+export async function DELETE(request: NextRequest) {
+  const supabase = await createSupabaseClient()
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { path } = await request.json()
+  if (!path || !path.startsWith(`${user.id}/`)) {
+    return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
+  }
+
+  const { error } = await supabase.storage.from(BUCKET).remove([path])
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  return new NextResponse(null, { status: 204 })
 }

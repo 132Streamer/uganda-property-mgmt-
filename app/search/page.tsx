@@ -1,287 +1,525 @@
-'use client'
+"use client";
 
-import { useEffect, useState, useCallback } from 'react'
-import { Input }  from '@/components/ui/input'
-import { Label }  from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { BedDouble, Bath, MapPin, SlidersHorizontal, X } from 'lucide-react'
+import { useEffect, useState, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { Search, SlidersHorizontal, X, Bed, Bath, MapPin, ChevronDown, Home, Building2, Warehouse, TreePine } from "lucide-react";
 
-// ─── Uganda Districts ─────────────────────────────────────────────────────────
-const UGANDA_DISTRICTS = [
-  'Abim','Adjumani','Agago','Alebtong','Amolatar','Amudat','Amuria','Amuru',
-  'Apac','Arua','Budaka','Bududa','Bugiri','Buhweju','Buikwe','Bukedea',
-  'Bukomansimbi','Bukwa','Bulambuli','Buliisa','Bundibugyo','Bushenyi',
-  'Busia','Butaleja','Butebo','Buvuma','Buyende','Dokolo','Gomba','Gulu',
-  'Hoima','Ibanda','Iganga','Isingiro','Jinja','Kaabong','Kabale','Kabarole',
-  'Kagadi','Kakumiro','Kalangala','Kaliro','Kalungu','Kampala','Kamuli',
-  'Kamwenge','Kanungu','Kapchorwa','Kasanda','Kasese','Katakwi','Kayunga',
-  'Kazo','Kibaale','Kiboga','Kibuku','Kikuube','Kiruhura','Kiryandongo',
-  'Kisoro','Kitgum','Koboko','Kole','Kotido','Kumi','Kwania','Kyankwanzi',
-  'Kyegegwa','Kyenjojo','Kyotera','Lamwo','Lira','Luuka','Luwero','Lwengo',
-  'Lyantonde','Madi-Okollo','Manafwa','Maracha','Masaka','Masindi','Mayuge',
-  'Mbale','Mbarara','Mitooma','Mityana','Moroto','Moyo','Mpigi','Mubende',
-  'Mukono','Nabilatuk','Nakapiripirit','Nakaseke','Nakasongola','Namayingo',
-  'Namisindwa','Namutumba','Napak','Nebbi','Ngora','Ntoroko','Ntungamo',
-  'Nwoya','Obongi','Omoro','Otuke','Oyam','Pader','Pakwach','Pallisa',
-  'Rakai','Rubanda','Rubirizi','Rukiga','Rukungiri','Rwampara','Sembabule',
-  'Serere','Sheema','Sironko','Soroti','Tororo','Wakiso','Yumbe','Zombo',
-].sort()
+// ─── Supabase client ────────────────────────────────────────────────────────
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-const BEDROOM_OPTIONS = ['Any', '1', '2', '3', '4', '5+']
+// ─── Types ───────────────────────────────────────────────────────────────────
+type Property = {
+  id: string;
+  title: string;
+  address: string;
+  district: string;
+  bedrooms: number;
+  bathrooms: number;
+  rent_per_month: number;
+  property_type: string;
+  status: string;
+  photos: string[];
+  description?: string;
+  amenities?: string[];
+};
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface Property {
-  id:        string
-  title:     string
-  location:  string
-  district:  string
-  price_ugx: number
-  bedrooms:  number
-  bathrooms: number
-  status:    string
-}
+type Filters = {
+  query: string;
+  district: string;
+  bedrooms: string;
+  max_rent: string;
+  property_type: string;
+};
 
-interface Filters {
-  district:  string
-  min_price: string
-  max_price: string
-  bedrooms:  string
-}
+// ─── Constants ───────────────────────────────────────────────────────────────
+const DISTRICTS = [
+  "Kampala", "Wakiso", "Mukono", "Entebbe", "Jinja",
+  "Gulu", "Mbarara", "Mbale", "Fort Portal", "Masaka",
+];
 
-const EMPTY_FILTERS: Filters = {
-  district: '', min_price: '', max_price: '', bedrooms: '',
-}
+const PROPERTY_TYPES = ["Apartment", "House", "Studio", "Villa", "Commercial"];
 
-// ─── Image Placeholder ────────────────────────────────────────────────────────
-function PropertyImagePlaceholder({ title }: { title: string }) {
-  // Deterministic pastel from title
-  const hue = title.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) % 360
-  return (
-    <div
-      className="w-full h-44 flex items-center justify-center rounded-t-xl overflow-hidden"
-      style={{ background: `hsl(${hue} 40% 88%)` }}
-    >
-      <svg width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="4" y="22" width="48" height="30" rx="3"
-          fill={`hsl(${hue} 35% 70%)`} />
-        <polygon points="28,4 52,22 4,22"
-          fill={`hsl(${hue} 50% 60%)`} />
-        <rect x="22" y="34" width="12" height="18" rx="1.5"
-          fill={`hsl(${hue} 30% 55%)`} />
-        <rect x="10" y="30" width="10" height="10" rx="1"
-          fill={`hsl(${hue} 30% 55%)`} />
-        <rect x="36" y="30" width="10" height="10" rx="1"
-          fill={`hsl(${hue} 30% 55%)`} />
-      </svg>
-    </div>
-  )
+const PROPERTY_ICONS: Record<string, typeof Home> = {
+  Apartment: Building2,
+  House: Home,
+  Studio: Warehouse,
+  Villa: TreePine,
+  Commercial: Building2,
+};
+
+function formatUGX(amount: number): string {
+  return new Intl.NumberFormat("en-UG", {
+    style: "currency",
+    currency: "UGX",
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
 // ─── Property Card ────────────────────────────────────────────────────────────
-function PropertyCard({ property }: { property: Property }) {
-  const formatUGX = (n: number) => 'UGX ' + n.toLocaleString('en-UG')
+function PropertyCard({ property, onClick }: { property: Property; onClick: () => void }) {
+  const [imgError, setImgError] = useState(false);
+  const TypeIcon = PROPERTY_ICONS[property.property_type] ?? Home;
 
   return (
-    <Card className="overflow-hidden hover:shadow-lg transition-shadow duration-200">
-      <PropertyImagePlaceholder title={property.title} />
-      <CardContent className="p-4 space-y-3">
+    <article
+      onClick={onClick}
+      className="group relative bg-white rounded-2xl overflow-hidden shadow-sm border border-stone-100 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer"
+    >
+      {/* Photo */}
+      <div className="relative h-52 bg-stone-100 overflow-hidden">
+        {property.photos?.[0] && !imgError ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={property.photos[0]}
+            alt={property.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-amber-50 to-stone-100">
+            <TypeIcon className="w-12 h-12 text-stone-300" />
+          </div>
+        )}
+        <span className="absolute top-3 left-3 bg-amber-500 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+          {property.property_type}
+        </span>
+      </div>
+
+      {/* Info */}
+      <div className="p-4 space-y-3">
         <div>
-          <h3 className="font-semibold text-sm leading-snug line-clamp-1">{property.title}</h3>
-          <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-            <MapPin className="w-3 h-3 flex-shrink-0" />
-            <span className="truncate">{property.location}, {property.district}</span>
+          <h3 className="font-semibold text-stone-800 text-base leading-snug line-clamp-1 group-hover:text-amber-600 transition-colors">
+            {property.title}
+          </h3>
+          <p className="text-stone-400 text-sm flex items-center gap-1 mt-0.5">
+            <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="truncate">{property.address}, {property.district}</span>
+          </p>
+        </div>
+
+        <div className="flex items-center gap-4 text-stone-500 text-sm">
+          <span className="flex items-center gap-1">
+            <Bed className="w-4 h-4" />
+            {property.bedrooms} {property.bedrooms === 1 ? "bed" : "beds"}
+          </span>
+          <span className="flex items-center gap-1">
+            <Bath className="w-4 h-4" />
+            {property.bathrooms} {property.bathrooms === 1 ? "bath" : "baths"}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between pt-1 border-t border-stone-100">
+          <div>
+            <p className="text-xs text-stone-400">per month</p>
+            <p className="text-amber-600 font-bold text-lg leading-tight">{formatUGX(property.rent_per_month)}</p>
+          </div>
+          <button className="bg-stone-900 text-white text-sm px-4 py-2 rounded-xl hover:bg-amber-600 transition-colors font-medium">
+            View Details
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+// ─── Detail Drawer ────────────────────────────────────────────────────────────
+function PropertyDrawer({ property, onClose }: { property: Property; onClose: () => void }) {
+  const [activePhoto, setActivePhoto] = useState(0);
+  const photos = property.photos?.length ? property.photos : [];
+  const TypeIcon = PROPERTY_ICONS[property.property_type] ?? Home;
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Panel */}
+      <div className="relative w-full sm:max-w-2xl max-h-[92dvh] sm:max-h-[85vh] bg-white sm:rounded-3xl rounded-t-3xl overflow-hidden flex flex-col shadow-2xl">
+        {/* Header drag handle (mobile) */}
+        <div className="sm:hidden flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 rounded-full bg-stone-200" />
+        </div>
+
+        {/* Close */}
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 z-10 bg-white/90 backdrop-blur rounded-full p-1.5 shadow-md hover:bg-stone-100 transition-colors"
+        >
+          <X className="w-5 h-5 text-stone-600" />
+        </button>
+
+        <div className="overflow-y-auto flex-1">
+          {/* Photos */}
+          <div className="relative h-64 sm:h-80 bg-stone-100 overflow-hidden">
+            {photos.length > 0 ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photos[activePhoto]}
+                  alt={`${property.title} photo ${activePhoto + 1}`}
+                  className="w-full h-full object-cover"
+                />
+                {photos.length > 1 && (
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                    {photos.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setActivePhoto(i)}
+                        className={`w-2 h-2 rounded-full transition-all ${i === activePhoto ? "bg-white w-5" : "bg-white/50"}`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-amber-50 to-stone-100">
+                <TypeIcon className="w-16 h-16 text-stone-300" />
+              </div>
+            )}
+
+            <span className="absolute top-4 left-4 bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 rounded-full">
+              {property.property_type}
+            </span>
+          </div>
+
+          {/* Details */}
+          <div className="p-6 space-y-5">
+            <div>
+              <h2 className="text-2xl font-bold text-stone-900">{property.title}</h2>
+              <p className="text-stone-500 flex items-center gap-1.5 mt-1">
+                <MapPin className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                {property.address}, {property.district}
+              </p>
+            </div>
+
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Bedrooms", value: property.bedrooms, icon: Bed },
+                { label: "Bathrooms", value: property.bathrooms, icon: Bath },
+                { label: "District", value: property.district, icon: MapPin },
+              ].map(({ label, value, icon: Icon }) => (
+                <div key={label} className="bg-stone-50 rounded-2xl p-3 text-center">
+                  <Icon className="w-5 h-5 text-amber-500 mx-auto mb-1" />
+                  <p className="text-stone-900 font-semibold text-sm">{value}</p>
+                  <p className="text-stone-400 text-xs">{label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Description */}
+            {property.description && (
+              <div>
+                <h3 className="font-semibold text-stone-800 mb-1.5">About</h3>
+                <p className="text-stone-500 text-sm leading-relaxed">{property.description}</p>
+              </div>
+            )}
+
+            {/* Amenities */}
+            {property.amenities?.length ? (
+              <div>
+                <h3 className="font-semibold text-stone-800 mb-2">Amenities</h3>
+                <div className="flex flex-wrap gap-2">
+                  {property.amenities.map((a) => (
+                    <span key={a} className="bg-amber-50 text-amber-700 text-xs px-3 py-1 rounded-full border border-amber-100">
+                      {a}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
-          <p className="font-bold text-base">{formatUGX(property.price_ugx)}
-            <span className="font-normal text-xs text-muted-foreground">/mo</span>
-          </p>
-          <Badge variant="outline" className="text-xs">Available</Badge>
+        {/* Footer CTA */}
+        <div className="border-t border-stone-100 p-4 bg-white flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs text-stone-400">Monthly rent</p>
+            <p className="text-amber-600 font-bold text-xl">{formatUGX(property.rent_per_month)}</p>
+          </div>
+          <button className="flex-1 max-w-xs bg-stone-900 text-white py-3 px-6 rounded-2xl font-semibold hover:bg-amber-600 transition-colors text-sm">
+            Enquire Now
+          </button>
         </div>
+      </div>
+    </div>
+  );
+}
 
-        <div className="flex items-center gap-3 text-xs text-muted-foreground border-t pt-2">
-          <span className="flex items-center gap-1">
-            <BedDouble className="w-3.5 h-3.5" />
-            {property.bedrooms} bed{property.bedrooms !== 1 ? 's' : ''}
-          </span>
-          <span className="flex items-center gap-1">
-            <Bath className="w-3.5 h-3.5" />
-            {property.bathrooms} bath{property.bathrooms !== 1 ? 's' : ''}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
-  )
+// ─── Empty State ──────────────────────────────────────────────────────────────
+function EmptyState({ hasFilters }: { hasFilters: boolean }) {
+  return (
+    <div className="col-span-full flex flex-col items-center justify-center py-24 text-center">
+      <div className="w-20 h-20 rounded-3xl bg-stone-100 flex items-center justify-center mb-4">
+        <Home className="w-9 h-9 text-stone-300" />
+      </div>
+      <h3 className="text-stone-800 font-semibold text-lg mb-1">No properties found</h3>
+      <p className="text-stone-400 text-sm max-w-xs">
+        {hasFilters
+          ? "Try adjusting your filters or search term."
+          : "No available properties at the moment. Check back soon."}
+      </p>
+    </div>
+  );
+}
+
+// ─── Select wrapper ───────────────────────────────────────────────────────────
+function FilterSelect({
+  value,
+  onChange,
+  placeholder,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  options: { label: string; value: string }[];
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full appearance-none bg-white border border-stone-200 rounded-xl px-3 py-2.5 pr-8 text-sm text-stone-700 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent cursor-pointer"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" />
+    </div>
+  );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SearchPage() {
-  const [filters,    setFilters]    = useState<Filters>(EMPTY_FILTERS)
-  const [properties, setProperties] = useState<Property[]>([])
-  const [loading,    setLoading]    = useState(true)
-  const [total,      setTotal]      = useState(0)
+  const [filters, setFilters] = useState<Filters>({
+    query: "",
+    district: "",
+    bedrooms: "",
+    max_rent: "",
+    property_type: "",
+  });
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Property | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
 
-  const fetchProperties = useCallback(async (f: Filters) => {
-    setLoading(true)
+  const fetchProperties = useCallback(async () => {
+    setLoading(true);
+    try {
+      let query = supabase
+        .from("properties")
+        .select("*")
+        .eq("status", "available");
 
-    const params = new URLSearchParams()
-    if (f.district)  params.set('district',  f.district)
-    if (f.min_price) params.set('min_price', f.min_price)
-    if (f.max_price) params.set('max_price', f.max_price)
-    if (f.bedrooms && f.bedrooms !== 'Any') {
-      // "5+" → send 5 as min; backend can be extended for gte
-      params.set('bedrooms', f.bedrooms.replace('+', ''))
+      if (filters.district) query = query.eq("district", filters.district);
+      if (filters.property_type) query = query.eq("property_type", filters.property_type);
+      if (filters.max_rent) query = query.lte("rent_per_month", Number(filters.max_rent));
+      if (filters.bedrooms) {
+        if (filters.bedrooms === "4+") {
+          query = query.gte("bedrooms", 4);
+        } else {
+          query = query.eq("bedrooms", Number(filters.bedrooms));
+        }
+      }
+
+      const { data, error } = await query.order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      let results: Property[] = data ?? [];
+
+      // Client-side full-text search across title, address, district
+      if (filters.query.trim()) {
+        const q = filters.query.toLowerCase();
+        results = results.filter(
+          (p) =>
+            p.title?.toLowerCase().includes(q) ||
+            p.address?.toLowerCase().includes(q) ||
+            p.district?.toLowerCase().includes(q)
+        );
+      }
+
+      setProperties(results);
+    } catch (err) {
+      console.error("Fetch error:", err);
+      setProperties([]);
+    } finally {
+      setLoading(false);
     }
+  }, [filters]);
 
-    const res  = await fetch(`/api/properties?${params.toString()}`)
-    const json = await res.json()
+  useEffect(() => {
+    const id = setTimeout(fetchProperties, 300);
+    return () => clearTimeout(id);
+  }, [fetchProperties]);
 
-    setProperties(json.data ?? [])
-    setTotal(json.data?.length ?? 0)
-    setLoading(false)
-  }, [])
+  const hasFilters =
+    !!filters.query ||
+    !!filters.district ||
+    !!filters.bedrooms ||
+    !!filters.max_rent ||
+    !!filters.property_type;
 
-  // Initial load
-  useEffect(() => { fetchProperties(EMPTY_FILTERS) }, [fetchProperties])
+  const clearFilters = () =>
+    setFilters({ query: "", district: "", bedrooms: "", max_rent: "", property_type: "" });
 
-  const setFilter = (key: keyof Filters, value: string) =>
-    setFilters(prev => ({ ...prev, [key]: value }))
-
-  const clearFilters = () => {
-    setFilters(EMPTY_FILTERS)
-    fetchProperties(EMPTY_FILTERS)
-  }
-
-  const hasActiveFilters = Object.values(filters).some(v => v !== '')
+  const setFilter = (key: keyof Filters) => (value: string) =>
+    setFilters((prev) => ({ ...prev, [key]: value }));
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Hero / Filter bar */}
-      <div className="border-b bg-muted/40">
-        <div className="container mx-auto px-4 py-6 max-w-6xl">
-          <div className="flex items-center gap-2 mb-4">
-            <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Filter Properties</span>
-            {hasActiveFilters && (
-              <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs"
-                onClick={clearFilters}>
-                <X className="w-3 h-3 mr-1" /> Clear
-              </Button>
+    <div className="min-h-screen bg-stone-50">
+      {/* ── Header ── */}
+      <header className="bg-white border-b border-stone-100 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+          <div className="flex items-center gap-3">
+            {/* Search bar */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-stone-400 pointer-events-none w-[18px] h-[18px]" />
+              <input
+                type="text"
+                value={filters.query}
+                onChange={(e) => setFilter("query")(e.target.value)}
+                placeholder="Search by title, address or district…"
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-stone-200 bg-stone-50 text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent focus:bg-white transition-colors"
+              />
+              {filters.query && (
+                <button
+                  onClick={() => setFilter("query")("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Filter toggle (mobile) */}
+            <button
+              onClick={() => setShowFilters((v) => !v)}
+              className={`sm:hidden flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${
+                showFilters || hasFilters
+                  ? "bg-amber-500 border-amber-500 text-white"
+                  : "border-stone-200 text-stone-600 bg-white"
+              }`}
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              Filters
+              {hasFilters && (
+                <span className="bg-white text-amber-600 text-xs font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                  {Object.values(filters).filter((v) => v && v !== filters.query).length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Filters row — always visible on sm+, toggleable on mobile */}
+          <div
+            className={`${
+              showFilters ? "flex" : "hidden"
+            } sm:flex flex-wrap gap-2 mt-3`}
+          >
+            <FilterSelect
+              value={filters.district}
+              onChange={setFilter("district")}
+              placeholder="All Districts"
+              options={DISTRICTS.map((d) => ({ label: d, value: d }))}
+            />
+            <FilterSelect
+              value={filters.bedrooms}
+              onChange={setFilter("bedrooms")}
+              placeholder="Any Bedrooms"
+              options={["1", "2", "3", "4+"].map((b) => ({ label: `${b} bed${b === "1" ? "" : "s"}`, value: b }))}
+            />
+            <FilterSelect
+              value={filters.property_type}
+              onChange={setFilter("property_type")}
+              placeholder="Any Type"
+              options={PROPERTY_TYPES.map((t) => ({ label: t, value: t }))}
+            />
+
+            {/* Max rent input */}
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 text-xs font-medium pointer-events-none">
+                UGX
+              </span>
+              <input
+                type="number"
+                value={filters.max_rent}
+                onChange={(e) => setFilter("max_rent")(e.target.value)}
+                placeholder="Max rent"
+                className="pl-10 pr-3 py-2.5 border border-stone-200 rounded-xl text-sm text-stone-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent w-36"
+              />
+            </div>
+
+            {hasFilters && (
+              <button
+                onClick={clearFilters}
+                className="text-sm text-stone-500 hover:text-red-500 flex items-center gap-1 px-2 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+                Clear
+              </button>
             )}
           </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {/* District */}
-            <div className="space-y-1">
-              <Label className="text-xs">District</Label>
-              <Select
-                value={filters.district || 'all'}
-                onValueChange={v => setFilter('district', v === 'all' ? '' : v)}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="All districts" />
-                </SelectTrigger>
-                <SelectContent className="max-h-60">
-                  <SelectItem value="all">All districts</SelectItem>
-                  {UGANDA_DISTRICTS.map(d => (
-                    <SelectItem key={d} value={d}>{d}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Min Price */}
-            <div className="space-y-1">
-              <Label className="text-xs">Min Price (UGX)</Label>
-              <Input
-                className="h-9 text-sm"
-                type="number" min={0}
-                placeholder="e.g. 300000"
-                value={filters.min_price}
-                onChange={e => setFilter('min_price', e.target.value)}
-              />
-            </div>
-
-            {/* Max Price */}
-            <div className="space-y-1">
-              <Label className="text-xs">Max Price (UGX)</Label>
-              <Input
-                className="h-9 text-sm"
-                type="number" min={0}
-                placeholder="e.g. 2000000"
-                value={filters.max_price}
-                onChange={e => setFilter('max_price', e.target.value)}
-              />
-            </div>
-
-            {/* Bedrooms */}
-            <div className="space-y-1">
-              <Label className="text-xs">Bedrooms</Label>
-              <Select
-                value={filters.bedrooms || 'Any'}
-                onValueChange={v => setFilter('bedrooms', v === 'Any' ? '' : v)}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="Any" />
-                </SelectTrigger>
-                <SelectContent>
-                  {BEDROOM_OPTIONS.map(o => (
-                    <SelectItem key={o} value={o}>{o}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <Button
-            className="mt-4 w-full sm:w-auto"
-            onClick={() => fetchProperties(filters)}
-          >
-            Search
-          </Button>
         </div>
-      </div>
+      </header>
 
-      {/* Results */}
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-lg font-semibold">
-            {loading ? 'Searching…' : `${total} propert${total !== 1 ? 'ies' : 'y'} found`}
-          </h1>
-        </div>
-
-        {/* Loading skeleton */}
-        {loading && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="rounded-xl border bg-muted animate-pulse h-72" />
-            ))}
-          </div>
-        )}
-
-        {/* Empty */}
-        {!loading && properties.length === 0 && (
-          <div className="text-center py-24 text-muted-foreground">
-            <p className="text-lg font-medium">No properties match your filters.</p>
-            <p className="text-sm mt-1">Try adjusting the search criteria.</p>
-          </div>
+      {/* ── Results ── */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        {/* Count */}
+        {!loading && (
+          <p className="text-stone-400 text-sm mb-4">
+            {properties.length === 0
+              ? "No properties found"
+              : `${properties.length} propert${properties.length === 1 ? "y" : "ies"} available`}
+          </p>
         )}
 
         {/* Grid */}
-        {!loading && properties.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {properties.map(p => (
-              <PropertyCard key={p.id} property={p} />
-            ))}
-          </div>
-        )}
-      </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {loading ? (
+            // Skeleton
+            Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-2xl overflow-hidden border border-stone-100 animate-pulse">
+                <div className="h-52 bg-stone-100" />
+                <div className="p-4 space-y-3">
+                  <div className="h-4 bg-stone-100 rounded-full w-3/4" />
+                  <div className="h-3 bg-stone-100 rounded-full w-1/2" />
+                  <div className="h-3 bg-stone-100 rounded-full w-1/3" />
+                  <div className="h-8 bg-stone-100 rounded-xl" />
+                </div>
+              </div>
+            ))
+          ) : properties.length === 0 ? (
+            <EmptyState hasFilters={hasFilters} />
+          ) : (
+            properties.map((p) => (
+              <PropertyCard key={p.id} property={p} onClick={() => setSelected(p)} />
+            ))
+          )}
+        </div>
+      </main>
+
+      {/* ── Detail Drawer ── */}
+      {selected && <PropertyDrawer property={selected} onClose={() => setSelected(null)} />}
     </div>
-  )
+  );
 }

@@ -1,317 +1,582 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
-import { Badge }   from '@/components/ui/badge'
-import { Button }  from '@/components/ui/button'
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Image from 'next/image'
+import Link from 'next/link'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog'
-import { Input }    from '@/components/ui/input'
-import { Label }    from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { toast } from 'sonner'
 import {
-  Card, CardContent, CardFooter, CardHeader, CardTitle,
-} from '@/components/ui/card'
-import { Pencil, Trash2, Plus, BedDouble, Bath, MapPin } from 'lucide-react'
-
-// ─── Uganda Districts ─────────────────────────────────────────────────────────
-const UGANDA_DISTRICTS = [
-  'Abim','Adjumani','Agago','Alebtong','Amolatar','Amudat','Amuria','Amuru',
-  'Apac','Arua','Budaka','Bududa','Bugiri','Buhweju','Buikwe','Bukedea',
-  'Bukomansimbi','Bukwa','Bulambuli','Buliisa','Bundibugyo','Bushenyi',
-  'Busia','Butaleja','Butebo','Buvuma','Buyende','Dokolo','Gomba','Gulu',
-  'Hoima','Ibanda','Iganga','Isingiro','Jinja','Kaabong','Kabale','Kabarole',
-  'Kagadi','Kakumiro','Kalangala','Kaliro','Kalungu','Kampala','Kamuli',
-  'Kamwenge','Kanungu','Kapchorwa','Kasanda','Kasese','Katakwi','Kayunga',
-  'Kazo','Kibaale','Kiboga','Kibuku','Kikuube','Kiruhura','Kiryandongo',
-  'Kisoro','Kitgum','Koboko','Kole','Kotido','Kumi','Kwania','Kyankwanzi',
-  'Kyegegwa','Kyenjojo','Kyotera','Lamwo','Lira','Luuka','Luwero','Lwengo',
-  'Lyantonde','Madi-Okollo','Manafwa','Maracha','Masaka','Masindi','Mayuge',
-  'Mbale','Mbarara','Mitooma','Mityana','Moroto','Moyo','Mpigi','Mubende',
-  'Mukono','Nabilatuk','Nakapiripirit','Nakaseke','Nakasongola','Namayingo',
-  'Namisindwa','Namutumba','Napak','Nebbi','Ngora','Ntoroko','Ntungamo',
-  'Nwoya','Obongi','Omoro','Otuke','Oyam','Pader','Pakwach','Pallisa',
-  'Rakai','Rubanda','Rubirizi','Rukiga','Rukungiri','Rwampara','Sembabule',
-  'Serere','Sheema','Sironko','Soroti','Tororo','Wakiso','Yumbe','Zombo',
-].sort()
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-type Status = 'available' | 'unavailable' | 'rented'
+  Plus,
+  Building2,
+  MapPin,
+  Pencil,
+  Eye,
+  Upload,
+  X,
+  Loader2,
+} from 'lucide-react'
 
 interface Property {
-  id:          string
-  title:       string
-  description: string
-  location:    string
-  district:    string
-  price_ugx:   number
-  bedrooms:    number
-  bathrooms:   number
-  status:      Status
-  created_at:  string
+  id: string
+  title: string
+  district: string
+  address: string
+  rent_ugx: number
+  status: 'available' | 'occupied' | 'maintenance'
+  property_type: string
+  photos: string[]
+  bedrooms: number
+  bathrooms: number
+  created_at: string
 }
 
-type FormData = Omit<Property, 'id' | 'status' | 'created_at'>
-
-const EMPTY_FORM: FormData = {
-  title: '', description: '', location: '', district: '',
-  price_ugx: 0, bedrooms: 1, bathrooms: 1,
+const STATUS_STYLES: Record<string, string> = {
+  available: 'bg-emerald-500/15 text-emerald-600 border-emerald-200',
+  occupied: 'bg-blue-500/15 text-blue-600 border-blue-200',
+  maintenance: 'bg-amber-500/15 text-amber-600 border-amber-200',
 }
 
-// ─── Status Badge ─────────────────────────────────────────────────────────────
-function StatusBadge({ status }: { status: Status }) {
-  const variants: Record<Status, 'default' | 'secondary' | 'destructive'> = {
-    available:   'default',
-    rented:      'secondary',
-    unavailable: 'destructive',
-  }
-  return <Badge variant={variants[status]}>{status}</Badge>
+const UGANDAN_DISTRICTS = [
+  'Kampala', 'Wakiso', 'Mukono', 'Jinja', 'Entebbe', 'Mbarara',
+  'Gulu', 'Lira', 'Fort Portal', 'Masaka', 'Mbale', 'Arua',
+]
+
+interface PhotoUploadState {
+  file: File
+  preview: string
+  uploading: boolean
+  url?: string
+  error?: string
 }
 
-// ─── Property Form ────────────────────────────────────────────────────────────
-function PropertyForm({
-  initial,
-  onSubmit,
-  loading,
+function formatUGX(amount: number) {
+  return new Intl.NumberFormat('en-UG', {
+    style: 'currency',
+    currency: 'UGX',
+    maximumFractionDigits: 0,
+  }).format(amount)
+}
+
+function PhotoUploader({
+  photos,
+  onChange,
 }: {
-  initial: FormData
-  onSubmit: (data: FormData) => void
-  loading: boolean
+  photos: PhotoUploadState[]
+  onChange: (photos: PhotoUploadState[]) => void
 }) {
-  const [form, setForm] = useState<FormData>(initial)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { setForm(initial) }, [initial])
+  async function uploadFile(file: File, index: number) {
+    const formData = new FormData()
+    formData.append('file', file)
 
-  const set = (field: keyof FormData, value: string | number) =>
-    setForm(prev => ({ ...prev, [field]: value }))
+    onChange(
+      photos.map((p, i) => (i === index ? { ...p, uploading: true, error: undefined } : p))
+    )
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      const json = await res.json()
+
+      if (!res.ok) throw new Error(json.error ?? 'Upload failed')
+
+      onChange(
+        photos.map((p, i) => (i === index ? { ...p, uploading: false, url: json.url } : p))
+      )
+    } catch (err) {
+      onChange(
+        photos.map((p, i) =>
+          i === index
+            ? { ...p, uploading: false, error: (err as Error).message }
+            : p
+        )
+      )
+    }
+  }
+
+  function addFiles(files: FileList) {
+    if (photos.length + files.length > 5) {
+      toast.error('Maximum 5 photos allowed')
+      return
+    }
+
+    const newPhotos: PhotoUploadState[] = Array.from(files).map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+      uploading: false,
+    }))
+
+    const updated = [...photos, ...newPhotos]
+    onChange(updated)
+
+    newPhotos.forEach((_, i) => {
+      uploadFile(files[i], photos.length + i)
+    })
+  }
+
+  function remove(index: number) {
+    const updated = photos.filter((_, i) => i !== index)
+    onChange(updated)
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="title">Title</Label>
-          <Input id="title" value={form.title}
-            onChange={e => set('title', e.target.value)} placeholder="e.g. Spacious 2BR in Kololo" />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="description">Description</Label>
-          <Textarea id="description" value={form.description}
-            onChange={e => set('description', e.target.value)}
-            placeholder="Describe the property..." rows={3} />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="location">Location / Street</Label>
-            <Input id="location" value={form.location}
-              onChange={e => set('location', e.target.value)} placeholder="e.g. Plot 12, Acacia Ave" />
+    <div className="space-y-2">
+      <div className="grid grid-cols-5 gap-2">
+        {photos.map((p, i) => (
+          <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-border">
+            <Image src={p.preview} alt="" fill className="object-cover" />
+            {p.uploading && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                <Loader2 className="w-4 h-4 text-white animate-spin" />
+              </div>
+            )}
+            {p.error && (
+              <div className="absolute inset-0 bg-destructive/20 flex items-center justify-center">
+                <span className="text-[10px] text-destructive text-center px-1">{p.error}</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => remove(i)}
+              className="absolute top-1 right-1 bg-black/60 rounded-full p-0.5 text-white hover:bg-black transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
           </div>
+        ))}
 
-          <div className="space-y-1.5">
-            <Label>District</Label>
-            <Select value={form.district} onValueChange={v => set('district', v)}>
-              <SelectTrigger><SelectValue placeholder="Select district" /></SelectTrigger>
-              <SelectContent className="max-h-60">
-                {UGANDA_DISTRICTS.map(d => (
-                  <SelectItem key={d} value={d}>{d}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="price">Price (UGX / month)</Label>
-          <Input id="price" type="number" min={0} value={form.price_ugx || ''}
-            onChange={e => set('price_ugx', Number(e.target.value))}
-            placeholder="e.g. 800000" />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="bedrooms">Bedrooms</Label>
-            <Input id="bedrooms" type="number" min={0} max={20} value={form.bedrooms}
-              onChange={e => set('bedrooms', Number(e.target.value))} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="bathrooms">Bathrooms</Label>
-            <Input id="bathrooms" type="number" min={0} max={20} value={form.bathrooms}
-              onChange={e => set('bathrooms', Number(e.target.value))} />
-          </div>
-        </div>
+        {photos.length < 5 && (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="aspect-square rounded-lg border-2 border-dashed border-border hover:border-primary/50 hover:bg-muted/50 transition-colors flex flex-col items-center justify-center gap-1 text-muted-foreground"
+          >
+            <Upload className="w-4 h-4" />
+            <span className="text-[10px]">Add</span>
+          </button>
+        )}
       </div>
 
-      <Button className="w-full" disabled={loading} onClick={() => onSubmit(form)}>
-        {loading ? 'Saving…' : 'Save Property'}
-      </Button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        className="hidden"
+        onChange={e => e.target.files && addFiles(e.target.files)}
+      />
+      <p className="text-xs text-muted-foreground">JPEG, PNG, WebP · Max 5MB each · Up to 5 photos</p>
     </div>
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-export default function LandlordPropertiesPage() {
-  const supabase = createClientComponentClient()
+function NewPropertyDialog({ onCreated }: { onCreated: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [photos, setPhotos] = useState<PhotoUploadState[]>([])
 
-  const [properties, setProperties] = useState<Property[]>([])
-  const [loading,    setLoading]    = useState(false)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing,    setEditing]    = useState<Property | null>(null)
-  const [formLoading, setFormLoading] = useState(false)
+  const [form, setForm] = useState({
+    title: '',
+    description: '',
+    district: '',
+    address: '',
+    rent_ugx: '',
+    bedrooms: '1',
+    bathrooms: '1',
+    property_type: 'apartment',
+    status: 'available',
+    amenities: '',
+  })
 
-  // ── Fetch own properties ──
-  const fetchProperties = async () => {
-    setLoading(true)
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) { setLoading(false); return }
-
-    const { data } = await supabase
-      .from('properties')
-      .select('*')
-      .eq('landlord_id', session.user.id)
-      .order('created_at', { ascending: false })
-
-    setProperties(data ?? [])
-    setLoading(false)
+  function set(key: string, value: string) {
+    setForm(f => ({ ...f, [key]: value }))
   }
 
-  useEffect(() => { fetchProperties() }, [])
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
 
-  // ── Create / Update ──
-  const handleSubmit = async (formData: FormData) => {
-    setFormLoading(true)
+    const pendingUploads = photos.some(p => p.uploading)
+    if (pendingUploads) {
+      toast.error('Wait for photos to finish uploading')
+      return
+    }
 
-    const method = editing ? 'PATCH' : 'POST'
-    const body   = editing ? { id: editing.id, ...formData } : formData
+    const failedUploads = photos.filter(p => !p.url && !p.uploading)
+    if (failedUploads.length > 0) {
+      toast.error('Some photos failed to upload. Remove them or retry.')
+      return
+    }
 
-    const res = await fetch('/api/properties', {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    setSubmitting(true)
 
-    setFormLoading(false)
+    try {
+      const res = await fetch('/api/properties', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          rent_ugx: Number(form.rent_ugx),
+          bedrooms: Number(form.bedrooms),
+          bathrooms: Number(form.bathrooms),
+          photos: photos.filter(p => p.url).map(p => p.url!),
+          amenities: form.amenities
+            .split(',')
+            .map(a => a.trim())
+            .filter(Boolean),
+        }),
+      })
 
-    if (res.ok) {
-      setDialogOpen(false)
-      setEditing(null)
-      fetchProperties()
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to create property')
+
+      toast.success('Property created')
+      setOpen(false)
+      setForm({
+        title: '', description: '', district: '', address: '',
+        rent_ugx: '', bedrooms: '1', bathrooms: '1',
+        property_type: 'apartment', status: 'available', amenities: '',
+      })
+      setPhotos([])
+      onCreated()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  // ── Soft delete ──
-  const handleDelete = async (id: string) => {
-    if (!confirm('Remove this property?')) return
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="gap-2">
+          <Plus className="w-4 h-4" />
+          New Property
+        </Button>
+      </DialogTrigger>
 
-    await fetch('/api/properties', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add New Property</DialogTitle>
+        </DialogHeader>
 
-    fetchProperties()
-  }
+        <form onSubmit={handleSubmit} className="space-y-5 pt-2">
+          {/* Photos */}
+          <div className="space-y-1.5">
+            <Label>Photos</Label>
+            <PhotoUploader photos={photos} onChange={setPhotos} />
+          </div>
 
-  const openAdd  = () => { setEditing(null); setDialogOpen(true) }
-  const openEdit = (p: Property) => { setEditing(p); setDialogOpen(true) }
+          {/* Title */}
+          <div className="space-y-1.5">
+            <Label htmlFor="title">Title *</Label>
+            <Input
+              id="title"
+              placeholder="e.g. 3-Bedroom Apartment in Kololo"
+              value={form.title}
+              onChange={e => set('title', e.target.value)}
+              required
+            />
+          </div>
 
-  const formatUGX = (n: number) =>
-    'UGX ' + n.toLocaleString('en-UG')
+          {/* Description */}
+          <div className="space-y-1.5">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              placeholder="Describe the property..."
+              value={form.description}
+              onChange={e => set('description', e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          {/* District + Address */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>District *</Label>
+              <Select value={form.district} onValueChange={v => set('district', v)} required>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select district" />
+                </SelectTrigger>
+                <SelectContent>
+                  {UGANDAN_DISTRICTS.map(d => (
+                    <SelectItem key={d} value={d}>{d}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="address">Address *</Label>
+              <Input
+                id="address"
+                placeholder="Plot 12, Acacia Avenue"
+                value={form.address}
+                onChange={e => set('address', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          {/* Type + Status */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Property Type *</Label>
+              <Select value={form.property_type} onValueChange={v => set('property_type', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {['apartment', 'house', 'studio', 'commercial', 'land'].map(t => (
+                    <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Status</Label>
+              <Select value={form.status} onValueChange={v => set('status', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {['available', 'occupied', 'maintenance'].map(s => (
+                    <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Rent + Beds + Baths */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="rent">Monthly Rent (UGX) *</Label>
+              <Input
+                id="rent"
+                type="number"
+                placeholder="1500000"
+                value={form.rent_ugx}
+                onChange={e => set('rent_ugx', e.target.value)}
+                min={0}
+                required
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="bedrooms">Bedrooms</Label>
+              <Input
+                id="bedrooms"
+                type="number"
+                min={0}
+                value={form.bedrooms}
+                onChange={e => set('bedrooms', e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="bathrooms">Bathrooms</Label>
+              <Input
+                id="bathrooms"
+                type="number"
+                min={0}
+                value={form.bathrooms}
+                onChange={e => set('bathrooms', e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Amenities */}
+          <div className="space-y-1.5">
+            <Label htmlFor="amenities">Amenities</Label>
+            <Input
+              id="amenities"
+              placeholder="Parking, Generator, Borehole, Security (comma-separated)"
+              value={form.amenities}
+              onChange={e => set('amenities', e.target.value)}
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Create Property
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PropertyCard({ property }: { property: Property }) {
+  const photo = property.photos?.[0]
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-5xl">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">My Properties</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {properties.length} listing{properties.length !== 1 ? 's' : ''}
-          </p>
+    <div className="group rounded-xl border border-border bg-card overflow-hidden hover:shadow-md transition-shadow">
+      {/* Photo */}
+      <div className="relative aspect-[4/3] bg-muted overflow-hidden">
+        {photo ? (
+          <Image
+            src={photo}
+            alt={property.title}
+            fill
+            className="object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+            <Building2 className="w-10 h-10" />
+          </div>
+        )}
+        <div className="absolute top-2 right-2">
+          <Badge
+            variant="outline"
+            className={`text-xs capitalize border ${STATUS_STYLES[property.status]}`}
+          >
+            {property.status}
+          </Badge>
         </div>
-
-        <Dialog open={dialogOpen} onOpenChange={open => { setDialogOpen(open); if (!open) setEditing(null) }}>
-          <DialogTrigger asChild>
-            <Button onClick={openAdd}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Property
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>{editing ? 'Edit Property' : 'Add New Property'}</DialogTitle>
-            </DialogHeader>
-            <PropertyForm
-              initial={editing
-                ? { title: editing.title, description: editing.description, location: editing.location,
-                    district: editing.district, price_ugx: editing.price_ugx,
-                    bedrooms: editing.bedrooms, bathrooms: editing.bathrooms }
-                : EMPTY_FORM}
-              onSubmit={handleSubmit}
-              loading={formLoading}
-            />
-          </DialogContent>
-        </Dialog>
       </div>
 
-      {/* Loading */}
-      {loading && (
-        <div className="text-center py-20 text-muted-foreground">Loading…</div>
-      )}
-
-      {/* Empty state */}
-      {!loading && properties.length === 0 && (
-        <div className="text-center py-20 border-2 border-dashed rounded-xl">
-          <p className="text-muted-foreground">No properties yet.</p>
-          <Button variant="link" onClick={openAdd}>Add your first listing</Button>
+      {/* Details */}
+      <div className="p-4 space-y-3">
+        <div>
+          <h3 className="font-semibold text-sm leading-snug line-clamp-1">{property.title}</h3>
+          <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+            <MapPin className="w-3 h-3 shrink-0" />
+            <span className="truncate">{property.district}</span>
+          </div>
         </div>
-      )}
 
-      {/* Property cards */}
-      {!loading && properties.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {properties.map(p => (
-            <Card key={p.id} className="flex flex-col">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-base leading-snug line-clamp-2">{p.title}</CardTitle>
-                  <StatusBadge status={p.status} />
-                </div>
-              </CardHeader>
+        <div className="flex items-baseline justify-between">
+          <span className="text-base font-bold text-foreground">
+            {formatUGX(property.rent_ugx)}
+          </span>
+          <span className="text-xs text-muted-foreground">/month</span>
+        </div>
 
-              <CardContent className="flex-1 space-y-2 text-sm text-muted-foreground">
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="truncate">{p.location}, {p.district}</span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1">
-                    <BedDouble className="w-3.5 h-3.5" /> {p.bedrooms} bed
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Bath className="w-3.5 h-3.5" /> {p.bathrooms} bath
-                  </span>
-                </div>
-                <p className="font-semibold text-foreground text-base">
-                  {formatUGX(p.price_ugx)}<span className="font-normal text-xs text-muted-foreground">/mo</span>
-                </p>
-              </CardContent>
+        <div className="text-xs text-muted-foreground capitalize">
+          {property.property_type} · {property.bedrooms} bed · {property.bathrooms} bath
+        </div>
 
-              <CardFooter className="flex gap-2 pt-2">
-                <Button size="sm" variant="outline" className="flex-1"
-                  onClick={() => openEdit(p)}>
-                  <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
-                </Button>
-                <Button size="sm" variant="destructive" className="flex-1"
-                  onClick={() => handleDelete(p.id)}>
-                  <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Remove
-                </Button>
-              </CardFooter>
-            </Card>
+        <div className="flex gap-2 pt-1">
+          <Button asChild size="sm" variant="outline" className="flex-1 gap-1.5 h-8">
+            <Link href={`/properties/${property.id}`}>
+              <Eye className="w-3.5 h-3.5" /> View
+            </Link>
+          </Button>
+          <Button asChild size="sm" variant="outline" className="flex-1 gap-1.5 h-8">
+            <Link href={`/properties/${property.id}/edit`}>
+              <Pencil className="w-3.5 h-3.5" /> Edit
+            </Link>
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function PropertiesPage() {
+  const router = useRouter()
+  const [properties, setProperties] = useState<Property[]>([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('')
+
+  async function fetchProperties() {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (statusFilter) params.set('status', statusFilter)
+      const res = await fetch(`/api/properties?${params}`)
+      if (res.status === 401) { router.push('/login'); return }
+      const json = await res.json()
+      setProperties(json.data ?? [])
+    } catch {
+      toast.error('Failed to load properties')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { fetchProperties() }, [statusFilter])
+
+  return (
+    <div className="container max-w-7xl mx-auto px-4 py-8 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Properties</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {properties.length} {properties.length === 1 ? 'property' : 'properties'}
+          </p>
+        </div>
+        <NewPropertyDialog onCreated={fetchProperties} />
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-2 flex-wrap">
+        {['', 'available', 'occupied', 'maintenance'].map(s => (
+          <button
+            key={s}
+            onClick={() => setStatusFilter(s)}
+            className={`px-3 py-1.5 text-sm rounded-full border transition-colors capitalize ${
+              statusFilter === s
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'border-border hover:bg-muted'
+            }`}
+          >
+            {s === '' ? 'All' : s}
+          </button>
+        ))}
+      </div>
+
+      {/* Grid */}
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card overflow-hidden animate-pulse">
+              <div className="aspect-[4/3] bg-muted" />
+              <div className="p-4 space-y-3">
+                <div className="h-4 bg-muted rounded w-3/4" />
+                <div className="h-3 bg-muted rounded w-1/2" />
+                <div className="h-5 bg-muted rounded w-1/3" />
+              </div>
+            </div>
           ))}
+        </div>
+      ) : properties.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
+          <Building2 className="w-12 h-12 text-muted-foreground" />
+          <div>
+            <p className="font-medium">No properties found</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {statusFilter ? `No ${statusFilter} properties.` : 'Add your first property to get started.'}
+            </p>
+          </div>
+          {!statusFilter && <NewPropertyDialog onCreated={fetchProperties} />}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {properties.map(p => <PropertyCard key={p.id} property={p} />)}
         </div>
       )}
     </div>
