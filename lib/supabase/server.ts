@@ -1,11 +1,10 @@
-import { createServerClient as createSupabaseServerClient } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import type { Database } from '@/types/supabase' // adjust path as needed
 
-export async function createServerClient() {
+export async function createClient() {
   const cookieStore = await cookies()
 
-  return createSupabaseServerClient<Database>(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -18,10 +17,7 @@ export async function createServerClient() {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
             )
-          } catch {
-            // Called from a Server Component — mutations are ignored.
-            // Middleware handles session refresh in that case.
-          }
+          } catch {}
         },
       },
     }
