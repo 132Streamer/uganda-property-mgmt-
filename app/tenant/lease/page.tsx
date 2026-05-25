@@ -1,5 +1,6 @@
 'use client'
 
+export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { Button } from '@/components/ui/button'
@@ -21,7 +22,7 @@ const BUCKET = 'lease-docs'
 const SIGNED_URL_EXPIRY = 3600 // 1 hour
 
 export default function TenantLeasePage() {
-  const supabase = createClientComponentClient()
+  const supabase = createClientComponentlient()
   const [documents, setDocuments] = useState<LeaseDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
