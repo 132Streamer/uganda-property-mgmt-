@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 
+export const dynamic = 'force-dynamic'
 
 interface InvitationDetails {
   id: string
@@ -22,14 +23,14 @@ interface InvitationDetails {
   }
 }
 
-export default function AcceptInvitePage() {
+function AcceptInviteContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const token = searchParams.get('token')
   const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   const [invitation, setInvitation] = useState<InvitationDetails | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,7 +74,7 @@ export default function AcceptInvitePage() {
     }
 
     validateToken()
-  }, [token, supabase])
+  }, [token])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -82,7 +83,6 @@ export default function AcceptInvitePage() {
     setError(null)
 
     try {
-      // Create auth user
       const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email: invitation.tenant_email,
         password: form.password,
@@ -97,7 +97,6 @@ export default function AcceptInvitePage() {
 
       const userId = authData.user.id
 
-      // Insert profile
       const { error: profileError } = await supabase.from('profiles').insert({
         id: userId,
         full_name: form.full_name,
@@ -108,7 +107,6 @@ export default function AcceptInvitePage() {
 
       if (profileError) throw new Error('Failed to create profile')
 
-      // Create tenancy record
       const { error: tenancyError } = await supabase.from('tenancies').insert({
         tenant_id: userId,
         property_id: invitation.property_id,
@@ -120,7 +118,6 @@ export default function AcceptInvitePage() {
 
       if (tenancyError) throw new Error('Failed to create tenancy record')
 
-      // Mark invitation accepted
       const { error: updateError } = await supabase
         .from('invitations')
         .update({ accepted: true, accepted_at: new Date().toISOString() })
@@ -128,7 +125,7 @@ export default function AcceptInvitePage() {
 
       if (updateError) throw new Error('Failed to mark invitation as accepted')
 
-      router.push('/dashboard')
+      router.push('/tenant/portal')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -169,7 +166,7 @@ export default function AcceptInvitePage() {
             <p className="text-gray-500">{invitation.properties?.address}</p>
             <p className="text-gray-500">Unit {invitation.units?.unit_number}</p>
             <p className="text-gray-900 font-semibold mt-2">
-              ${Number(invitation.monthly_rent).toLocaleString()} / month
+              UGX {Number(invitation.monthly_rent).toLocaleString()} / month
             </p>
             <p className="text-gray-500">
               Starting {new Date(invitation.start_date).toLocaleDateString()}
@@ -191,14 +188,14 @@ export default function AcceptInvitePage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Phone (Uganda)</label>
             <input
               type="tel"
               required
               value={form.phone}
               onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="+1 555 000 0000"
+              placeholder="+256 700 000000"
             />
           </div>
 
@@ -227,5 +224,17 @@ export default function AcceptInvitePage() {
         </form>
       </div>
     </div>
+  )
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-gray-500">Loading...</p>
+      </div>
+    }>
+      <AcceptInviteContent />
+    </Suspense>
   )
 }
