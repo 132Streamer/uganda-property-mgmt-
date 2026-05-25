@@ -22,7 +22,10 @@ const BUCKET = 'lease-docs'
 const SIGNED_URL_EXPIRY = 3600 // 1 hour
 
 export default function TenantLeasePage() {
-  const supabase = createClientComponentlient()
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
   const [documents, setDocuments] = useState<LeaseDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
