@@ -1,151 +1,205 @@
-"use client";
+'use client'
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createBrowserClient } from "@supabase/ssr";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 
-type Role = "landlord" | "tenant";
+type Role = 'landlord' | 'tenant'
+
+interface FormState {
+  full_name: string
+  email: string
+  phone: string
+  password: string
+  role: Role
+}
 
 export default function SignupPage() {
-  const router = useRouter();
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState<Role>("tenant");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const router = useRouter()
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  )
 
-  async function handleSignup(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
+  const [form, setForm] = useState<FormState>({
+    full_name: '',
+    email: '',
+    phone: '',
+    password: '',
+    role: 'tenant',
+  })
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
-    const { error } = await supabase.auth.signUp({
+  function handleChange(
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) {
+    setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+
+    const { full_name, email, phone, password, role } = form
+
+    // 1. Sign up with metadata
+    const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: {
-          full_name: fullName,
-          phone,
-          role,
-        },
+        data: { role, full_name, phone },
       },
-    });
+    })
 
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-      return;
+    if (authError || !authData.user) {
+      setError(authError?.message ?? 'Signup failed.')
+      setLoading(false)
+      return
     }
 
-    router.push("/login");
+    // 2. Insert into public.users
+    const { error: dbError } = await supabase.from('users').insert({
+      id: authData.user.id,
+      full_name,
+      email,
+      phone,
+      role,
+    })
+
+    if (dbError) {
+      setError(dbError.message)
+      setLoading(false)
+      return
+    }
+
+    // 3. Role-based redirect
+    if (role === 'landlord') {
+      router.push('/landlord/onboarding')
+    } else {
+      router.push('/tenant/portal')
+    }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Create account</h1>
-          <p className="text-sm text-muted-foreground">
-            Fill in your details to get started.
-          </p>
-        </div>
+    <main className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-sm">
+        <h1 className="mb-6 text-2xl font-semibold text-gray-900">
+          Create account
+        </h1>
 
-        <form onSubmit={handleSignup} className="space-y-4">
-          <div className="space-y-1">
-            <Label htmlFor="full_name">Full name</Label>
-            <Input
-              id="full_name"
-              type="text"
-              required
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-            />
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Field
+            label="Full name"
+            name="full_name"
+            type="text"
+            value={form.full_name}
+            onChange={handleChange}
+            required
+          />
+          <Field
+            label="Email"
+            name="email"
+            type="email"
+            value={form.email}
+            onChange={handleChange}
+            required
+          />
+          <Field
+            label="Phone"
+            name="phone"
+            type="tel"
+            value={form.phone}
+            onChange={handleChange}
+            required
+          />
+          <Field
+            label="Password"
+            name="password"
+            type="password"
+            value={form.password}
+            onChange={handleChange}
+            required
+            minLength={8}
+          />
 
-          <div className="space-y-1">
-            <Label htmlFor="phone">Phone</Label>
-            <Input
-              id="phone"
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="email">Email</Label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Role</Label>
-            <RadioGroup
-              value={role}
-              onValueChange={(val) => setRole(val as Role)}
-              className="flex gap-6"
-            >
-              <div className="flex items-center gap-2">
-                <RadioGroupItem value="tenant" id="tenant" />
-                <Label htmlFor="tenant" className="cursor-pointer font-normal">
-                  Tenant
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <RadioGroupItem value="landlord" id="landlord" />
-                <Label htmlFor="landlord" className="cursor-pointer font-normal">
-                  Landlord
-                </Label>
-              </div>
-            </RadioGroup>
+          {/* Role selector */}
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">
+              I am a…
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              {(['landlord', 'tenant'] as Role[]).map((r) => (
+                <label
+                  key={r}
+                  className={`flex cursor-pointer items-center justify-center rounded-lg border-2 py-3 text-sm font-medium capitalize transition-colors ${
+                    form.role === r
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="role"
+                    value={r}
+                    checked={form.role === r}
+                    onChange={handleChange}
+                    className="sr-only"
+                  />
+                  {r}
+                </label>
+              ))}
+            </div>
           </div>
 
           {error && (
-            <p className="text-sm text-destructive">{error}</p>
+            <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">
+              {error}
+            </p>
           )}
 
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Creating account…" : "Create account"}
-          </Button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-blue-600 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? 'Creating account…' : 'Sign up'}
+          </button>
         </form>
 
-        <p className="text-sm text-muted-foreground text-center">
-          Already have an account?{" "}
-          <a href="/login" className="underline underline-offset-4 hover:text-foreground">
-            Sign in
+        <p className="mt-6 text-center text-sm text-gray-500">
+          Already have an account?{' '}
+          <a href="/login" className="font-medium text-blue-600 hover:underline">
+            Log in
           </a>
         </p>
       </div>
+    </main>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Tiny reusable field component (local to this file)
+// ---------------------------------------------------------------------------
+interface FieldProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label: string
+  name: string
+}
+
+function Field({ label, name, ...rest }: FieldProps) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={name} className="text-sm font-medium text-gray-700">
+        {label}
+      </label>
+      <input
+        id={name}
+        name={name}
+        {...rest}
+        className="rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+      />
     </div>
-  );
+  )
 }

@@ -1,48 +1,37 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+// app/api/payments/initiate/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { v4 as uuidv4 } from "uuid";
-import { registerIPN, submitOrder } from "@/lib/pesapal";
+import {
+  getAuthToken,
+  registerIPN,
+  submitOrder,
+} from "@/lib/pesapal";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL!;
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
+interface InitiateBody {
+  lease_id: string;
+  amount: number;
+  payer_name: string;
+  payer_email: string;
+  payer_phone: string;
+  payment_type: "tenant" | "guest";
+  guest_payment_id?: string; // required when payment_type === 'guest'
+}
+
+function buildAppUrl(path: string): string {
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  return `${base.replace(/\/$/, "")}${path}`;
+}
 
 export async function POST(req: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies });
-
-  // Auth check — tenant only
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const userId = session.user.id;
-
-  // Verify user has tenant role
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", userId)
-    .single();
-
-  if (!profile || profile.role !== "tenant") {
-    return NextResponse.json({ error: "Forbidden: tenants only" }, { status: 403 });
-  }
-
-  // Parse body
-  let body: {
-    tenancy_id: string;
-    amount: number;
-    period_month: number;
-    period_year: number;
-  };
+  let body: InitiateBody;
 
   try {
     body = await req.json();
@@ -50,109 +39,97 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { tenancy_id, amount, period_month, period_year } = body;
+  const { lease_id, amount, payer_name, payer_email, payer_phone, payment_type, guest_payment_id } =
+    body;
 
-  if (!tenancy_id || !amount || !period_month || !period_year) {
+  // --- Validation ---
+  if (!lease_id || !amount || !payer_name || !payer_email || !payer_phone || !payment_type) {
+    return NextResponse.json({ error: "Missing required fields" }, { status: 422 });
+  }
+  if (!["tenant", "guest"].includes(payment_type)) {
+    return NextResponse.json({ error: "payment_type must be 'tenant' or 'guest'" }, { status: 422 });
+  }
+  if (payment_type === "guest" && !guest_payment_id) {
     return NextResponse.json(
-      { error: "Missing required fields: tenancy_id, amount, period_month, period_year" },
-      { status: 400 }
+      { error: "guest_payment_id required for guest payments" },
+      { status: 422 }
     );
   }
-
-  // Fetch tenancy + property + tenant details, verify ownership
-  const { data: tenancy, error: tenancyError } = await supabase
-    .from("tenancies")
-    .select(
-      `
-      id,
-      unit:units (
-        id,
-        unit_number,
-        property:properties ( id, name )
-      ),
-      tenant:profiles!tenancies_tenant_id_fkey (
-        id,
-        first_name,
-        last_name,
-        email
-      )
-    `
-    )
-    .eq("id", tenancy_id)
-    .eq("tenant_id", userId)
-    .eq("status", "active")
-    .single();
-
-  if (tenancyError || !tenancy) {
-    return NextResponse.json(
-      { error: "Tenancy not found or not active" },
-      { status: 404 }
-    );
+  if (amount <= 0) {
+    return NextResponse.json({ error: "amount must be positive" }, { status: 422 });
   }
-
-  const property = (tenancy.unit as any)?.property;
-  const unit = tenancy.unit as any;
-  const tenant = tenancy.tenant as any;
-  const monthName = MONTH_NAMES[period_month - 1];
-
-  const description = `Rent payment - ${property?.name ?? "Property"} Unit ${unit?.unit_number ?? ""} ${monthName} ${period_year}`;
-  const internalOrderId = uuidv4();
 
   try {
-    // Register IPN URL
-    const ipnUrl = `${APP_URL}/api/payments/ipn`;
-    const notificationId = await registerIPN(ipnUrl);
+    // 1. Authenticate with Pesapal
+    const pesapalToken = await getAuthToken();
 
-    // Submit order to Pesapal
-    const orderResponse = await submitOrder({
-      id: internalOrderId,
-      currency: "UGX",
+    // 2. Register IPN
+    const ipnUrl = buildAppUrl("/api/payments/webhook");
+    const ipnId = await registerIPN(pesapalToken, ipnUrl);
+
+    // 3. Build a unique merchant reference
+    const merchantReference = uuidv4();
+    const callbackUrl = buildAppUrl(`/payment/callback?ref=${merchantReference}`);
+
+    // 4. Submit order
+    const order = await submitOrder({
+      token: pesapalToken,
+      ipnId,
+      merchantReference,
       amount,
-      description,
-      callbackUrl: `${APP_URL}/tenant/payments/callback`,
-      notificationId,
-      billingAddress: {
-        email_address: tenant.email,
-        first_name: tenant.first_name,
-        last_name: tenant.last_name,
-      },
+      currency: "UGX",
+      description: `Rent payment — lease ${lease_id}`,
+      callbackUrl,
+      payerName: payer_name,
+      payerEmail: payer_email,
+      payerPhone: payer_phone,
     });
 
-    // Persist pending payment record
-    const { error: insertError } = await supabase
-      .from("rent_payments")
-      .insert({
-        id: internalOrderId,
-        tenancy_id,
-        tenant_id: userId,
-        amount,
-        currency: "UGX",
-        period_month,
-        period_year,
-        description,
-        status: "pending",
-        pesapal_order_id: orderResponse.order_tracking_id,
-        pesapal_merchant_reference: orderResponse.merchant_reference,
-        created_at: new Date().toISOString(),
-      });
+    // 5. Persist pending record
+    const commonFields = {
+      lease_id,
+      amount,
+      currency: "UGX",
+      payer_name,
+      payer_email,
+      payer_phone,
+      merchant_reference: merchantReference,
+      order_tracking_id: order.order_tracking_id,
+      status: "pending",
+      ipn_id: ipnId,
+    };
 
-    if (insertError) {
-      console.error("DB insert error:", insertError);
-      return NextResponse.json(
-        { error: "Failed to record payment initiation" },
-        { status: 500 }
-      );
+    if (payment_type === "tenant") {
+      const { error: dbErr } = await supabase.from("rent_payments").insert({
+        ...commonFields,
+        payment_type: "tenant",
+      });
+      if (dbErr) throw new Error(`DB insert failed: ${dbErr.message}`);
+    } else {
+      // Update the guest_payment row with tracking info
+      const { error: dbErr } = await supabase
+        .from("guest_payments")
+        .update({
+          merchant_reference: merchantReference,
+          order_tracking_id: order.order_tracking_id,
+          payer_name,
+          payer_email,
+          payer_phone,
+          status: "pending",
+          ipn_id: ipnId,
+        })
+        .eq("id", guest_payment_id);
+      if (dbErr) throw new Error(`DB update failed: ${dbErr.message}`);
     }
 
     return NextResponse.json({
-      redirect_url: orderResponse.redirect_url,
-      order_tracking_id: orderResponse.order_tracking_id,
+      redirect_url: order.redirect_url,
+      order_tracking_id: order.order_tracking_id,
+      merchant_reference: merchantReference,
     });
   } catch (err) {
-    console.error("Payment initiation error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Payment initiation failed" },
-      { status: 500 }
-    );
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[/api/payments/initiate]", message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
