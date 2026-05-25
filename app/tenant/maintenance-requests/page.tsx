@@ -67,7 +67,10 @@ const STATUS_CONFIG: Record<Status, { label: string; className: string }> = {
 }
 
 export default function TenantMaintenancePage() {
-  const supabase = createClientComponentClient()
+  const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Form state

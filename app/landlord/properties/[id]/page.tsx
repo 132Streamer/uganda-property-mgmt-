@@ -36,7 +36,10 @@ interface Props {
 }
 
 export default function PropertyPage({ params }: Props) {
-  const supabase = createClientComponentClient()
+  const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
   const [tenancies, setTenancies] = useState<TenancyWithLeases[]>([])
   const [loading, setLoading] = useState(true)
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({})

@@ -78,7 +78,10 @@ const STATUS_CONFIG: Record<Status, { className: string }> = {
 const ALL = 'all'
 
 export default function LandlordMaintenancePage() {
-  const supabase = createClientComponentClient()
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   const [requests, setRequests] = useState<MaintenanceRequest[]>([])
   const [properties, setProperties] = useState<Property[]>([])
