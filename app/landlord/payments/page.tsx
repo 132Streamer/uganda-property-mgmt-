@@ -1,34 +1,9 @@
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { CreditCard } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 export default function PaymentsPage() {
-  const payments = [
-    {
-      id: 1,
-      tenant: 'Jane Smith',
-      amount: '$1,200',
-      date: '2024-01-15',
-      status: 'Received',
-    },
-    {
-      id: 2,
-      tenant: 'Bob Johnson',
-      amount: '$1,200',
-      date: '2024-01-14',
-      status: 'Received',
-    },
-    {
-      id: 3,
-      tenant: 'Alice Williams',
-      amount: '$1,200',
-      date: '2024-01-10',
-      status: 'Pending',
-    },
-  ]
-
   return (
     <div className="space-y-8">
       <div>
@@ -43,7 +18,7 @@ export default function PaymentsPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Collected</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">$24,500</div>
+            <div className="text-2xl font-bold text-foreground">UGX 0</div>
             <p className="text-xs text-muted-foreground mt-1">This month</p>
           </CardContent>
         </Card>
@@ -52,8 +27,8 @@ export default function PaymentsPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Pending</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">$1,200</div>
-            <p className="text-xs text-muted-foreground mt-1">From 1 tenant</p>
+            <div className="text-2xl font-bold text-foreground">UGX 0</div>
+            <p className="text-xs text-muted-foreground mt-1">No pending payments</p>
           </CardContent>
         </Card>
         <Card>
@@ -61,36 +36,27 @@ export default function PaymentsPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Overdue</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">$0</div>
+            <div className="text-2xl font-bold text-foreground">UGX 0</div>
             <p className="text-xs text-muted-foreground mt-1">No overdue payments</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Payment List */}
+      {/* Empty State */}
       <Card>
         <CardHeader>
           <CardTitle>Recent Payments</CardTitle>
           <CardDescription>Payment history and status</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {payments.map((payment) => (
-              <div key={payment.id} className="flex items-center justify-between border-b border-border pb-4 last:border-b-0 last:pb-0">
-                <div>
-                  <p className="font-medium text-foreground">{payment.tenant}</p>
-                  <p className="text-sm text-muted-foreground">{payment.date}</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <p className="font-semibold text-foreground">{payment.amount}</p>
-                  <span className={`text-xs font-semibold px-2 py-1 rounded ${
-                    payment.status === 'Received' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                  }`}>
-                    {payment.status}
-                  </span>
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-14 h-14 bg-stone-100 rounded-2xl flex items-center justify-center mb-4">
+              <CreditCard className="w-7 h-7 text-stone-300" />
+            </div>
+            <h3 className="font-semibold text-stone-800 mb-1">No payments yet</h3>
+            <p className="text-stone-400 text-sm max-w-xs">
+              Payments will appear here once tenants start paying rent via Mobile Money.
+            </p>
           </div>
         </CardContent>
       </Card>
