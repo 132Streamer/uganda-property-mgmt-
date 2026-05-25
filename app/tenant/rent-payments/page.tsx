@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const MONTH_NAMES = [
@@ -52,7 +52,7 @@ const STATUS_LABELS: Record<PaymentStatus, string> = {
 };
 
 export default function TenantPaymentsPage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
   const router = useRouter();
 
   const [tenancy, setTenancy] = useState<Tenancy | null>(null);

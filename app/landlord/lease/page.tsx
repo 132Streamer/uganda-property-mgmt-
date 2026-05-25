@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createClient } from "@/lib/supabase/client";
 import { FileText, Upload, CheckCircle2, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ interface Tenancy {
 }
 
 export default function LandlordLeasePage() {
-  const supabase = createClientComponentClient();
+  const supabase = createClient();
   const [tenancies, setTenancies] = useState<Tenancy[]>([]);
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState<string | null>(null);
