@@ -11,6 +11,14 @@ import { IncomeChartCard } from '@/components/dashboard/income-chart-card'
 import { dashboardIcons } from '@/components/dashboard/icons'
 import { ArrowRight, Calendar } from 'lucide-react'
 
+function formatUGX(amount: number) {
+  return new Intl.NumberFormat('en-UG', {
+    style: 'currency',
+    currency: 'UGX',
+    maximumFractionDigits: 0,
+  }).format(amount)
+}
+
 export default function LandlordDashboard() {
   const supabase = createClient()
 
@@ -42,6 +50,15 @@ export default function LandlordDashboard() {
 
       const propertyIds = properties?.map(p => p.id) ?? []
 
+      // Units
+      const { data: units } = await supabase
+        .from('units')
+        .select('id, status')
+        .in('property_id', propertyIds.length ? propertyIds : ['none'])
+
+      const totalUnits = units?.length ?? 0
+      const occupiedUnits = units?.filter(u => u.status === 'occupied').length ?? 0
+
       // Active tenancies
       const { data: tenancies } = await supabase
         .from('tenancies')
@@ -49,18 +66,16 @@ export default function LandlordDashboard() {
         .eq('landlord_id', landlordId)
         .eq('status', 'active')
 
-      // Units
-      const { data: units } = await supabase
-        .from('units')
-        .select('id, status')
-        .in('property_id', propertyIds.length ? propertyIds : ['none'])
+      const activeTenants = tenancies?.length ?? 0
 
       // Pending maintenance
-      const { data: pendingM } = await supabase
+      const { data: pendingReqs } = await supabase
         .from('maintenace_requests')
         .select('id')
         .eq('landlord_id', landlordId)
         .eq('status', 'open')
+
+      const pendingMaintenance = pendingReqs?.length ?? 0
 
       // Recent payments
       const { data: recentPayments } = await supabase
@@ -71,52 +86,80 @@ export default function LandlordDashboard() {
         .order('paid_at', { ascending: false })
         .limit(5)
 
+      // Monthly income (current month)
+      const now = new Date()
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+      const { data: monthPayments } = await supabase
+        .from('rent_payments')
+        .select('amount_ugx')
+        .eq('landlord_id', landlordId)
+        .eq('status', 'completed')
+        .gte('paid_at', monthStart)
+
+      const monthlyIncome = monthPayments?.reduce((sum, p) => sum + (p.amount_ugx ?? 0), 0) ?? 0
+
+      // Income last 6 months
+      const months = Array.from({ length: 6 }, (_, i) => {
+        const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1)
+        return {
+          label: d.toLocaleString('en-UG', { month: 'short' }),
+          start: d.toISOString(),
+          end: new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString(),
+        }
+      })
+
+      const incomeByMonth = await Promise.all(
+        months.map(async ({ label, start, end }) => {
+          const { data } = await supabase
+            .from('rent_payments')
+            .select('amount_ugx')
+            .eq('landlord_id', landlordId)
+            .eq('status', 'completed')
+            .gte('paid_at', start)
+            .lt('paid_at', end)
+          const income = data?.reduce((sum, p) => sum + (p.amount_ugx ?? 0), 0) ?? 0
+          return { month: label, income }
+        })
+      )
+
       // Maintenance requests for display
-      const { data: maintenanceList } = await supabase
+      const { data: maintRequests } = await supabase
         .from('maintenace_requests')
-        .select('id, title, status, created_at, tenant_id, property_id')
+        .select('id, title, status, created_at, tenant_id, landlord_id')
         .eq('landlord_id', landlordId)
         .in('status', ['open', 'in_progress'])
         .order('created_at', { ascending: false })
         .limit(5)
 
-      // Income last 6 months
-      const now = new Date()
-      const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
-      const { data: incomeRows } = await supabase
-        .from('rent_payments')
-        .select('amount_ugx, paid_at')
-        .eq('landlord_id', landlordId)
-        .eq('status', 'completed')
-        .gte('paid_at', sixMonthsAgo.toISOString())
-
-      // Build income chart data
-      const monthMap: Record<string, number> = {}
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-        const key = d.toLocaleString('en-UG', { month: 'short' })
-        monthMap[key] = 0
-      }
-      incomeRows?.forEach(row => {
-        const key = new Date(row.paid_at).toLocaleString('en-UG', { month: 'short' })
-        if (key in monthMap) monthMap[key] += row.amount_ugx
-      })
-      const chartData = Object.entries(monthMap).map(([month, income]) => ({ month, income }))
-
-      const occupiedUnits = units?.filter(u => u.status === 'occupied').length ?? 0
-      const monthlyIncome = tenancies?.reduce((sum, t) => sum + (t.monthly_rent_ugx ?? 0), 0) ?? 0
-
       setStats({
-        totalProperties: properties?.length ?? 0,
-        activeTenants: tenancies?.length ?? 0,
+        totalProperties: propertyIds.length,
+        activeTenants,
         monthlyIncome,
-        pendingMaintenance: pendingM?.length ?? 0,
+        pendingMaintenance,
         occupiedUnits,
-        totalUnits: units?.length ?? 0,
+        totalUnits,
       })
-      setPayments(recentPayments ?? [])
-      setMaintenance(maintenanceList ?? [])
-      setIncomeData(chartData)
+      setPayments(
+        (recentPayments ?? []).map(p => ({
+          id: p.id,
+          tenant: p.tenant_id,
+          property: '—',
+          amount: p.amount_ugx,
+          date: p.paid_at ?? p.created_at,
+          status: 'paid',
+        }))
+      )
+      setMaintenance(
+        (maintRequests ?? []).map(r => ({
+          id: r.id,
+          property: '—',
+          tenant: r.tenant_id,
+          issue: r.title,
+          status: r.status === 'open' ? 'pending' : 'in_progress',
+          submittedDate: r.created_at,
+        }))
+      )
+      setIncomeData(incomeByMonth)
       setLoading(false)
     }
 
@@ -128,9 +171,13 @@ export default function LandlordDashboard() {
   const IncomeIcon = dashboardIcons.income
   const MaintenanceIcon = dashboardIcons.maintenance
 
-  const occupancyPct = stats.totalUnits > 0
-    ? Math.round((stats.occupiedUnits / stats.totalUnits) * 100)
-    : 0
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground text-sm">Loading dashboard…</p>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -139,92 +186,138 @@ export default function LandlordDashboard() {
           <div>
             <h1 className="text-3xl md:text-4xl font-bold text-foreground">Dashboard</h1>
             <p className="text-muted-foreground mt-2">
-              Welcome back! Here&apos;s your property overview for <span className="font-medium">Uganda</span>
+              Welcome back! Here's your property overview for <span className="font-medium">Uganda</span>
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Calendar className="w-4 h-4" />
-            {new Date().toLocaleDateString('en-UG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {new Date().toLocaleDateString('en-UG', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            })}
           </div>
         </div>
       </div>
 
-      {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-32 bg-muted animate-pulse rounded-2xl" />
-          ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <StatCard
+          label="Total Properties"
+          value={stats.totalProperties}
+          subtext="Active properties"
+          icon={<PropertyIcon className="w-5 h-5" />}
+        />
+        <StatCard
+          label="Active Tenants"
+          value={stats.activeTenants}
+          subtext="Across all properties"
+          icon={<TenantsIcon className="w-5 h-5" />}
+        />
+        <StatCard
+          label="Monthly Income"
+          value={formatUGX(stats.monthlyIncome)}
+          subtext="UGX collected this month"
+          icon={<IncomeIcon className="w-5 h-5" />}
+        />
+        <StatCard
+          label="Pending Issues"
+          value={stats.pendingMaintenance}
+          subtext="Maintenance requests"
+          icon={<MaintenanceIcon className="w-5 h-5" />}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        <div className="lg:col-span-2">
+          <IncomeChartCard data={incomeData} currency="UGX" />
         </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <StatCard label="Total Properties" value={stats.totalProperties} subtext="Active properties" icon={<PropertyIcon className="w-5 h-5" />} trend="up" trendValue="" />
-            <StatCard label="Active Tenants" value={stats.activeTenants} subtext="Across all properties" icon={<TenantsIcon className="w-5 h-5" />} trend="up" trendValue="" />
-            <StatCard label="Monthly Income" value={`${(stats.monthlyIncome / 1000000).toFixed(1)}M`} subtext="UGX expected" icon={<IncomeIcon className="w-5 h-5" />} trend="up" trendValue="" />
-            <StatCard label="Pending Issues" value={stats.pendingMaintenance} subtext="Maintenance requests" icon={<MaintenanceIcon className="w-5 h-5" />} trend={stats.pendingMaintenance > 2 ? 'down' : 'up'} trendValue={stats.pendingMaintenance > 2 ? 'Attention needed' : 'On track'} />
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-            <div className="lg:col-span-2">
-              <IncomeChartCard data={incomeData} currency="UGX" />
-            </div>
-            <div>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg font-semibold">Occupancy Rate</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-foreground">Occupied Units</span>
-                        <span className="text-2xl font-bold text-primary">{occupancyPct}%</span>
-                      </div>
-                      <div className="w-full bg-muted rounded-full h-2">
-                        <div className="bg-primary h-2 rounded-full transition-all" style={{ width: `${occupancyPct}%` }} />
-                      </div>
-                    </div>
-                    <div className="pt-4 border-t border-border">
-                      <p className="text-sm text-muted-foreground">
-                        {stats.occupiedUnits} of {stats.totalUnits} units occupied
-                      </p>
-                    </div>
+        <div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">Occupancy Rate</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-foreground">Occupied Units</span>
+                    <span className="text-2xl font-bold text-primary">
+                      {stats.totalUnits > 0
+                        ? `${Math.round((stats.occupiedUnits / stats.totalUnits) * 100)}%`
+                        : '—'}
+                    </span>
                   </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all"
+                      style={{
+                        width: stats.totalUnits > 0
+                          ? `${(stats.occupiedUnits / stats.totalUnits) * 100}%`
+                          : '0%'
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="pt-4 border-t border-border">
+                  <p className="text-sm text-muted-foreground">
+                    {stats.occupiedUnits} of {stats.totalUnits} units occupied
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <RecentPaymentsCard payments={payments} currency="UGX" />
-            <PendingMaintenanceCard requests={maintenance} />
-          </div>
-        </>
-      )}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        <RecentPaymentsCard payments={payments} currency="UGX" />
+        <PendingMaintenanceCard requests={maintenance} />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {[
-          { href: '/landlord/properties', icon: PropertyIcon, title: 'Manage Properties', desc: 'Add, edit, or manage your property listings' },
-          { href: '/landlord/tenants', icon: TenantsIcon, title: 'Manage Tenants', desc: 'View tenant details and communications' },
-          { href: '/landlord/payments', icon: IncomeIcon, title: 'Payment Tracking', desc: 'Monitor all incoming rent payments' },
-        ].map(({ href, icon: Icon, title, desc }) => (
-          <Link href={href} key={href}>
-            <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
-              <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Icon className="w-5 h-5 text-primary" />
-                  {title}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-4">{desc}</p>
-                <div className="flex items-center text-primary text-sm font-medium">
-                  View All <ArrowRight className="w-4 h-4 ml-2" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+        <Link href="/landlord/properties">
+          <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <PropertyIcon className="w-5 h-5 text-primary" /> Manage Properties
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Add, edit, or manage your property listings</p>
+              <div className="flex items-center text-primary text-sm font-medium">
+                View All <ArrowRight className="w-4 h-4 ml-2" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/landlord/tenants">
+          <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <TenantsIcon className="w-5 h-5 text-primary" /> Manage Tenants
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">View tenant details and communications</p>
+              <div className="flex items-center text-primary text-sm font-medium">
+                View All <ArrowRight className="w-4 h-4 ml-2" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/landlord/payments">
+          <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <IncomeIcon className="w-5 h-5 text-primary" /> Payment Tracking
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">Monitor all incoming rent payments</p>
+              <div className="flex items-center text-primary text-sm font-medium">
+                View All <ArrowRight className="w-4 h-4 ml-2" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
     </div>
   )
