@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseRouteClient, createSupabaseAdminClient } from '@/lib/supabase-server';
+import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase-server';
 import { computeDaysUntilExpiry, resolveLeaseStatus, validateDateRange } from '@/lib/lease-utils';
 import type { CreateLeaseBody, LeaseWithDetails, ApiError } from '@/types/lease';
 
 // ─── POST ────────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  const supabase = createSupabaseRouteClient(request);
+  const supabase = await createSupabaseServerClient(request);
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 // ─── GET ─────────────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
-  const supabase = createSupabaseRouteClient(request);
+  const supabase = await createSupabaseServerClient(request);
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {

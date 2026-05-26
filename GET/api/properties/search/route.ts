@@ -1,121 +1,125 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 
-export async function GET(request: NextRequest) {
-  const supabase = await createClient()
-  const { searchParams } = new URL(request.url)
+export const runtime = 'edge'
 
-  const location    = searchParams.get('location')
-  const min_price   = searchParams.get('min_price')
-  const max_price   = searchParams.get('max_price')
-  const bedrooms    = searchParams.get('bedrooms')
-  const availability = searchParams.get('availability')
+const VALID_PROPERTY_TYPES = ['apartment', 'house', 'commercial'] as const
+type PropertyType = (typeof VALID_PROPERTY_TYPES)[number]
+
+function parseIntParam(value: string | null): number | null {
+  if (!value) return null
+  const n = parseInt(value, 10)
+  return isNaN(n) ? null : n
+}
+
+function parseFloatParam(value: string | null): number | null {
+  if (!value) return null
+  const n = parseFloat(value)
+  return isNaN(n) ? null : n
+}
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl
+
+  const district  = searchParams.get('district')?.trim() || null
+  const minRent   = parseFloatParam(searchParams.get('min_rent'))
+  const maxRent   = parseFloatParam(searchParams.get('max_rent'))
+  const bedrooms  = parseIntParam(searchParams.get('bedrooms'))
+  const typeParam = searchParams.get('type')?.trim() || null
+
+  // Validate property type
+  const propertyType: PropertyType | null =
+    typeParam && VALID_PROPERTY_TYPES.includes(typeParam as PropertyType)
+      ? (typeParam as PropertyType)
+      : null
+
+  if (typeParam && !propertyType) {
+    return NextResponse.json(
+      { error: `Invalid type. Must be one of: ${VALID_PROPERTY_TYPES.join(', ')}` },
+      { status: 400 }
+    )
+  }
+
+  const supabase = createClient()
 
   try {
-    // ── Base query ──────────────────────────────────────────────────────────
-    let query = supabase
+    let query = (await supabase)
       .from('properties')
       .select(`
         id,
         title,
-        address,
+        description,
         district,
-        division,
+        address,
+        type,
         bedrooms,
-        bathrooms,
-        rent_amount,
-        units (
+        amenities,
+        images,
+        created_at,
+        units!inner (
           id,
-          status
-        ),
-        property_photos (
-          photo_url,
-          is_primary,
-          display_order
+          unit_number,
+          floor,
+          status,
+          tenancies (
+            monthly_rent_ugx,
+            end_date
+          )
         )
       `)
-      .eq('status', 'active')
+      // Only properties that have at least one vacant unit
+      .eq('units.status', 'vacant')
 
-    // ── Filters ─────────────────────────────────────────────────────────────
-    if (location) {
-      query = query.ilike('district', `%${location}%`)
+    if (district) {
+      query = query.ilike('district', district)
     }
 
-    if (min_price) {
-      query = query.gte('rent_amount', Number(min_price))
+    if (propertyType) {
+      query = query.eq('type', propertyType)
     }
 
-    if (max_price) {
-      query = query.lte('rent_amount', Number(max_price))
+    if (bedrooms !== null) {
+      query = query.eq('bedrooms', bedrooms)
     }
-
-    if (bedrooms) {
-      const bedroomCount = Number(bedrooms)
-      if (bedroomCount >= 4) {
-        // "4+" — return all properties with 4 or more bedrooms
-        query = query.gte('bedrooms', 4)
-      } else {
-        query = query.eq('bedrooms', bedroomCount)
-      }
-    }
-
-    // Order newest first
-    query = query.order('created_at', { ascending: false })
 
     const { data: properties, error } = await query
 
-    if (error) {
-      console.error('Supabase query error:', error)
-      return NextResponse.json(
-        { error: 'Failed to fetch properties', details: error.message },
-        { status: 500 }
-      )
+    if (error) throw error
+
+    // Filter by rent range — rent lives on tenancies or a base_rent column.
+    // Here we assume properties have a base_monthly_rent_ugx column,
+    // OR we derive it from the latest tenancy on each vacant unit.
+    // Adjust the field name to match your schema.
+    let filtered = properties ?? []
+
+    if (minRent !== null || maxRent !== null) {
+      filtered = filtered.filter((p: any) => {
+        const rent: number = (p as any).base_monthly_rent_ugx ?? 0
+        if (minRent !== null && rent < minRent) return false
+        if (maxRent !== null && rent > maxRent) return false
+        return true
+      })
     }
 
-    // ── Shape the response ──────────────────────────────────────────────────
-    const shaped = (properties ?? []).map((property: { property_photos: never[]; units: never[]; id: any; title: any; address: any; district: any; division: any; bedrooms: any; bathrooms: any; rent_amount: any }) => {
-      // First image: prefer is_primary, then lowest display_order, then first
-      const photos: { photo_url: string; is_primary: boolean; display_order: number }[] =
-        property.property_photos ?? []
-
-      const sortedPhotos = [...photos].sort((a, b) => {
-        if (a.is_primary && !b.is_primary) return -1
-        if (!a.is_primary && b.is_primary) return 1
-        return (a.display_order ?? 0) - (b.display_order ?? 0)
-      })
-
-      const firstPhotoUrl = sortedPhotos[0]?.photo_url ?? null
-
-      // Available unit count
-      const units: { id: string; status: string }[] = property.units ?? []
-      const availableUnits = units.filter((u) => u.status === 'available').length
-
-      // Optionally filter out properties with 0 available units when
-      // the caller explicitly requests availability
-      if (availability === 'true' && availableUnits === 0) return null
+    // Shape response — strip nested tenancies from unit objects
+    const result = filtered.map((property: any) => {
+      const { units, ...rest } = property as any
+      const vacantUnits = (units ?? [])
+        .filter((u: any) => u.status === 'vacant')
+        .map(({ tenancies: _t, ...unit }: any) => unit)
 
       return {
-        id:                  property.id,
-        title:               property.title,
-        address:             property.address,
-        district:            property.district,
-        division:            property.division,
-        bedrooms:            property.bedrooms,
-        bathrooms:           property.bathrooms,
-        rent_amount:         property.rent_amount,
-        first_photo_url:     firstPhotoUrl,
-        available_units:     availableUnits,
+        ...rest,
+        vacant_unit_count: vacantUnits.length,
+        units: vacantUnits,
       }
-    }).filter(Boolean)
+    })
 
+    return NextResponse.json({ data: result, count: result.length })
+  } catch (err: any) {
+    console.error('[properties/search] error:', err)
     return NextResponse.json(
-      { properties: shaped, count: shaped.length },
-      { status: 200 }
-    )
-  } catch (err) {
-    console.error('Unexpected error:', err)
-    return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Failed to fetch properties' },
       { status: 500 }
     )
   }

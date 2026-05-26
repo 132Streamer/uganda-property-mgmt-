@@ -1,405 +1,278 @@
 'use client'
 
-export const dynamic = 'force-dynamic';
-import { useEffect, useState, useCallback } from 'react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { Separator } from '@/components/ui/separator'
-import { toast } from '@/components/ui/use-toast'
+import { useEffect, useState, useTransition } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import { Loader2, ChevronDown, ChevronRight, SlidersHorizontal } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { formatDistanceToNow } from 'date-fns'
 
-type Priority = 'Low' | 'Medium' | 'High' | 'Urgent'
-type Status = 'Open' | 'In Progress' | 'Resolved'
+type MaintenanceStatus = 'submitted' | 'acknowledged' | 'in_progress' | 'resolved'
 
 interface MaintenanceRequest {
   id: string
   title: string
   description: string
-  priority: Priority
-  status: Status
-  photo_url: string | null
+  status: MaintenanceStatus
+  landlord_note: string | null
   created_at: string
   updated_at: string
-  tenant: {
-    id: string
-    full_name: string
-    email: string
+  properties: { name: string }
+  profiles: { full_name: string; email: string }
+}
+
+const STATUS_OPTIONS: { value: MaintenanceStatus; label: string }[] = [
+  { value: 'submitted',    label: 'Submitted'    },
+  { value: 'acknowledged', label: 'Acknowledged' },
+  { value: 'in_progress',  label: 'In Progress'  },
+  { value: 'resolved',     label: 'Resolved'     },
+]
+
+const STATUS_COLORS: Record<MaintenanceStatus, string> = {
+  submitted:    'text-gray-700  bg-gray-50  border-gray-200',
+  acknowledged: 'text-blue-700  bg-blue-50  border-blue-200',
+  in_progress:  'text-amber-700 bg-amber-50 border-amber-200',
+  resolved:     'text-emerald-700 bg-emerald-50 border-emerald-200',
+}
+
+function StatusDropdown({
+  requestId,
+  current,
+  onUpdate,
+}: {
+  requestId: string
+  current: MaintenanceStatus
+  onUpdate: (id: string, status: MaintenanceStatus, note: string) => Promise<void>
+}) {
+  const [status, setStatus]   = useState<MaintenanceStatus>(current)
+  const [note, setNote]       = useState('')
+  const [open, setOpen]       = useState(false)
+  const [pending, startTransition] = useTransition()
+  const [toast, setToast]     = useState<string | null>(null)
+
+  function showToast(msg: string) {
+    setToast(msg)
+    setTimeout(() => setToast(null), 3000)
   }
-  property: {
-    id: string
-    name: string
-    address: string
+
+  function handleUpdate() {
+    startTransition(async () => {
+      try {
+        await onUpdate(requestId, status, note)
+        setOpen(false)
+        setNote('')
+        showToast('Status updated')
+      } catch {
+        showToast('Failed to update')
+      }
+    })
   }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${STATUS_COLORS[status]}`}
+      >
+        {STATUS_OPTIONS.find(o => o.value === status)?.label}
+        <svg className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+        </svg>
+      </button>
+
+      {toast && (
+        <div className="absolute -top-8 left-0 z-50 rounded bg-gray-900 px-2 py-1 text-xs text-white whitespace-nowrap">
+          {toast}
+        </div>
+      )}
+
+      {open && (
+        <div className="absolute left-0 z-40 mt-1 w-56 rounded-lg border border-gray-200 bg-white shadow-lg">
+          <div className="p-2">
+            {STATUS_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setStatus(opt.value)}
+                className={`flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors hover:bg-gray-50 ${status === opt.value ? 'font-semibold text-gray-900' : 'text-gray-600'}`}
+              >
+                {status === opt.value && (
+                  <svg className="h-3 w-3 shrink-0 text-gray-900" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                  </svg>
+                )}
+                <span className={status !== opt.value ? 'ml-5' : ''}>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-gray-100 p-2">
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="Note to tenant (optional)"
+              rows={2}
+              className="w-full resize-none rounded-md border border-gray-200 px-2.5 py-1.5 text-xs text-gray-700 placeholder-gray-400 focus:border-gray-400 focus:outline-none"
+            />
+            <div className="mt-1.5 flex gap-1.5">
+              <button
+                onClick={handleUpdate}
+                disabled={pending || status === current}
+                className="flex-1 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:opacity-40"
+              >
+                {pending ? 'Saving…' : 'Update'}
+              </button>
+              <button
+                onClick={() => { setOpen(false); setStatus(current); setNote('') }}
+                className="flex-1 rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
-interface Property {
-  id: string
-  name: string
-  address: string
+function RequestRow({
+  request,
+  onUpdate,
+}: {
+  request: MaintenanceRequest
+  onUpdate: (id: string, status: MaintenanceStatus, note: string) => Promise<void>
+}) {
+  return (
+    <tr className="border-b border-gray-100 last:border-0">
+      <td className="py-3 pr-4">
+        <p className="text-sm font-medium text-gray-900">{request.title}</p>
+        <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{request.description}</p>
+        {request.landlord_note && (
+          <p className="mt-1 text-xs text-gray-400 italic line-clamp-1">Note: {request.landlord_note}</p>
+        )}
+      </td>
+      <td className="py-3 pr-4 text-xs text-gray-600 whitespace-nowrap">
+        <p className="font-medium">{request.profiles?.full_name}</p>
+        <p className="text-gray-400">{request.profiles?.email}</p>
+      </td>
+      <td className="py-3 pr-4 text-xs text-gray-500 whitespace-nowrap">
+        {request.properties?.name}
+      </td>
+      <td className="py-3 pr-4 text-xs text-gray-400 whitespace-nowrap">
+        {new Date(request.created_at).toLocaleDateString('en-UG', { day: 'numeric', month: 'short', year: 'numeric' })}
+      </td>
+      <td className="py-3">
+        <StatusDropdown
+          requestId={request.id}
+          current={request.status}
+          onUpdate={onUpdate}
+        />
+      </td>
+    </tr>
+  )
 }
-
-const PRIORITY_CONFIG: Record<Priority, { className: string }> = {
-  Low: { className: 'bg-slate-100 text-slate-700 border-slate-200' },
-  Medium: { className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  High: { className: 'bg-orange-50 text-orange-700 border-orange-200' },
-  Urgent: { className: 'bg-red-50 text-red-700 border-red-200' },
-}
-
-const STATUS_CONFIG: Record<Status, { className: string }> = {
-  Open: { className: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-  'In Progress': { className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  Resolved: { className: 'bg-green-50 text-green-700 border-green-200' },
-}
-
-const ALL = 'all'
 
 export default function LandlordMaintenancePage() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
-
   const [requests, setRequests] = useState<MaintenanceRequest[]>([])
-  const [properties, setProperties] = useState<Property[]>([])
-  const [loading, setLoading] = useState(true)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [updatingId, setUpdatingId] = useState<string | null>(null)
-
-  // Filters
-  const [filterProperty, setFilterProperty] = useState(ALL)
-  const [filterStatus, setFilterStatus] = useState(ALL)
-  const [filterPriority, setFilterPriority] = useState(ALL)
-  const [search, setSearch] = useState('')
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState<string | null>(null)
+  const [filter, setFilter]     = useState<MaintenanceStatus | 'all'>('all')
 
   useEffect(() => {
-    fetchProperties()
-    fetchRequests()
-  }, [])
+    async function fetchRequests() {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { setError('Not authenticated'); setLoading(false); return }
 
-  async function fetchProperties() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-    const { data } = await supabase
-      .from('properties')
-      .select('id, name, address')
-      .eq('landlord_id', session.user.id)
-    setProperties(data ?? [])
-  }
+      const { data, error } = await supabase
+        .from('maintenance_requests')
+        .select('*, properties(name), profiles:tenant_id(full_name, email)')
+        .order('created_at', { ascending: false })
 
-  const fetchRequests = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (filterProperty !== ALL) params.set('property_id', filterProperty)
-      if (filterStatus !== ALL) params.set('status', filterStatus)
-      if (filterPriority !== ALL) params.set('priority', filterPriority)
-
-      const res = await fetch(`/api/maintenance?${params.toString()}`)
-      const json = await res.json()
-      if (json.data) setRequests(json.data)
-    } finally {
+      if (error) setError(error.message)
+      else setRequests(data ?? [])
       setLoading(false)
     }
-  }, [filterProperty, filterStatus, filterPriority])
 
-  useEffect(() => {
     fetchRequests()
-  }, [fetchRequests])
+  }, [supabase])
 
-  async function handleStatusUpdate(requestId: string, newStatus: Status) {
-    setUpdatingId(requestId)
-    try {
-      const res = await fetch('/api/maintenance', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: requestId, status: newStatus }),
-      })
+  async function handleUpdate(id: string, status: MaintenanceStatus, note: string) {
+    const res = await fetch('/api/maintenance/update-status', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId: id, status, landlordNote: note || undefined }),
+    })
 
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Update failed')
-
-      setRequests((prev) =>
-        prev.map((r) => (r.id === requestId ? { ...r, status: newStatus } : r))
-      )
-      toast({ title: 'Status updated', description: `Marked as ${newStatus}. Tenant notified.` })
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' })
-    } finally {
-      setUpdatingId(null)
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error ?? 'Failed to update')
     }
+
+    const { data } = await res.json()
+    setRequests(prev => prev.map(r => r.id === id ? { ...r, ...data } : r))
   }
 
-  const filtered = requests.filter((r) => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      r.title.toLowerCase().includes(q) ||
-      r.tenant.full_name.toLowerCase().includes(q) ||
-      r.property.name.toLowerCase().includes(q)
-    )
-  })
+  const filtered = filter === 'all' ? requests : requests.filter(r => r.status === filter)
 
-  const toggleExpand = (id: string) =>
-    setExpandedId((prev) => (prev === id ? null : id))
+  const counts = requests.reduce<Partial<Record<MaintenanceStatus | 'all', number>>>(
+    (acc, r) => { acc[r.status] = (acc[r.status] ?? 0) + 1; return acc },
+    { all: requests.length }
+  )
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Maintenance Requests</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {filtered.length} request{filtered.length !== 1 ? 's' : ''}
-            {filterProperty !== ALL || filterStatus !== ALL || filterPriority !== ALL
-              ? ' (filtered)'
-              : ''}
-          </p>
-        </div>
+    <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Maintenance Requests</h1>
+        <span className="text-sm text-gray-500">{requests.length} total</span>
       </div>
 
-      {/* ── Filters ── */}
-      <div className="flex flex-wrap gap-3 items-center">
-        <SlidersHorizontal className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-
-        <Input
-          placeholder="Search tenant, property, title…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-8 w-56 text-sm"
-        />
-
-        <Select value={filterProperty} onValueChange={setFilterProperty}>
-          <SelectTrigger className="h-8 w-44 text-sm">
-            <SelectValue placeholder="All properties" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>All properties</SelectItem>
-            {properties.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="h-8 w-36 text-sm">
-            <SelectValue placeholder="All statuses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>All statuses</SelectItem>
-            {(['Open', 'In Progress', 'Resolved'] as Status[]).map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={filterPriority} onValueChange={setFilterPriority}>
-          <SelectTrigger className="h-8 w-36 text-sm">
-            <SelectValue placeholder="All priorities" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>All priorities</SelectItem>
-            {(['Low', 'Medium', 'High', 'Urgent'] as Priority[]).map((p) => (
-              <SelectItem key={p} value={p}>{p}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {(filterProperty !== ALL || filterStatus !== ALL || filterPriority !== ALL || search) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => {
-              setFilterProperty(ALL)
-              setFilterStatus(ALL)
-              setFilterPriority(ALL)
-              setSearch('')
-            }}
+      {/* Filter tabs */}
+      <div className="mb-4 flex gap-1 border-b border-gray-200">
+        {(['all', ...STATUS_OPTIONS.map(o => o.value)] as const).map(s => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={`px-3 py-2 text-xs font-medium transition-colors ${
+              filter === s
+                ? 'border-b-2 border-gray-900 text-gray-900'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
           >
-            Clear filters
-          </Button>
-        )}
+            {s === 'all' ? 'All' : STATUS_OPTIONS.find(o => o.value === s)?.label}
+            {counts[s] ? <span className="ml-1 text-gray-400">({counts[s]})</span> : null}
+          </button>
+        ))}
       </div>
 
-      <Separator />
-
-      {/* ── Table ── */}
-      {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      {loading && (
+        <div className="space-y-2 pt-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-14 animate-pulse rounded bg-gray-100" />
+          ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <p className="text-center text-muted-foreground text-sm py-16">No requests found.</p>
-      ) : (
-        <div className="rounded-md border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead className="w-8" />
-                <TableHead>Tenant</TableHead>
-                <TableHead>Property</TableHead>
-                <TableHead>Title</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Submitted</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((req) => (
-                <>
-                  <TableRow
-                    key={req.id}
-                    className={cn(
-                      'cursor-pointer hover:bg-muted/40 transition-colors',
-                      expandedId === req.id && 'bg-muted/40'
-                    )}
-                    onClick={() => toggleExpand(req.id)}
-                  >
-                    <TableCell>
-                      {expandedId === req.id ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium text-sm">{req.tenant.full_name}</div>
-                      <div className="text-xs text-muted-foreground">{req.tenant.email}</div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm">{req.property.name}</div>
-                      <div className="text-xs text-muted-foreground truncate max-w-[140px]">
-                        {req.property.address}
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-[200px]">
-                      <span className="text-sm truncate block">{req.title}</span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={cn('text-xs', PRIORITY_CONFIG[req.priority].className)}
-                      >
-                        {req.priority}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={cn('text-xs', STATUS_CONFIG[req.status].className)}
-                      >
-                        {req.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                      {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
-                    </TableCell>
-                  </TableRow>
+      )}
 
-                  {/* ── Expanded Row ── */}
-                  {expandedId === req.id && (
-                    <TableRow key={`${req.id}-expanded`} className="bg-muted/20 hover:bg-muted/20">
-                      <TableCell />
-                      <TableCell colSpan={6} className="py-4">
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="space-y-1.5">
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                Description
-                              </p>
-                              <p className="text-sm whitespace-pre-wrap">{req.description}</p>
-                            </div>
+      {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
-                            <div className="space-y-4">
-                              {req.photo_url && (
-                                <div className="space-y-1.5">
-                                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                    Photo
-                                  </p>
-                                  <a
-                                    href={req.photo_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                      src={req.photo_url}
-                                      alt="Attachment"
-                                      className="h-32 rounded-md object-cover border hover:opacity-90 transition-opacity"
-                                    />
-                                  </a>
-                                </div>
-                              )}
+      {!loading && !error && filtered.length === 0 && (
+        <p className="mt-8 text-sm text-gray-500">No requests found.</p>
+      )}
 
-                              <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
-                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                  Update Status
-                                </p>
-                                <div className="flex items-center gap-2">
-                                  <Select
-                                    value={req.status}
-                                    onValueChange={(v) =>
-                                      handleStatusUpdate(req.id, v as Status)
-                                    }
-                                    disabled={updatingId === req.id}
-                                  >
-                                    <SelectTrigger className="w-40 h-8 text-sm">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {(['Open', 'In Progress', 'Resolved'] as Status[]).map(
-                                        (s) => (
-                                          <SelectItem key={s} value={s}>
-                                            {s}
-                                          </SelectItem>
-                                        )
-                                      )}
-                                    </SelectContent>
-                                  </Select>
-                                  {updatingId === req.id && (
-                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <p className="text-xs text-muted-foreground">
-                            Last updated{' '}
-                            {formatDistanceToNow(new Date(req.updated_at), { addSuffix: true })}
-                          </p>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </>
+      {!loading && !error && filtered.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200">
+                {['Request', 'Tenant', 'Property', 'Date', 'Status'].map(h => (
+                  <th key={h} className="pb-2 pr-4 text-left text-xs font-medium text-gray-400">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(r => (
+                <RequestRow key={r.id} request={r} onUpdate={handleUpdate} />
               ))}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       )}
     </div>

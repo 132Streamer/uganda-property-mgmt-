@@ -1,551 +1,456 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import Image from 'next/image'
-import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ── Uganda districts ─────────────────────────────────────────────────────────
+const UGANDA_DISTRICTS = [
+  'Abim', 'Adjumani', 'Agago', 'Alebtong', 'Amolatar', 'Amudat', 'Amuria',
+  'Amuru', 'Apac', 'Arua', 'Budaka', 'Bududa', 'Bugiri', 'Buhweju',
+  'Buikwe', 'Bukedea', 'Bukomansimbi', 'Bukwa', 'Bulambuli', 'Buliisa',
+  'Bundibugyo', 'Bunyangabu', 'Bushenyi', 'Busia', 'Butaleja', 'Butebo',
+  'Buvuma', 'Buyende', 'Dokolo', 'Gomba', 'Gulu', 'Hoima', 'Ibanda',
+  'Iganga', 'Isingiro', 'Jinja', 'Kaabong', 'Kabale', 'Kabarole',
+  'Kaberamaido', 'Kagadi', 'Kakumiro', 'Kalaki', 'Kalangala', 'Kaliro',
+  'Kalungu', 'Kampala', 'Kamuli', 'Kamwenge', 'Kanungu', 'Kapchorwa',
+  'Kapelebyong', 'Karenga', 'Kasese', 'Kasanda', 'Katakwi', 'Kayunga',
+  'Kazo', 'Kibaale', 'Kiboga', 'Kibuku', 'Kikuube', 'Kiruhura', 'Kiryandongo',
+  'Kisoro', 'Kitagwenda', 'Kitgum', 'Koboko', 'Kole', 'Kotido', 'Kumi',
+  'Kwania', 'Kween', 'Kyankwanzi', 'Kyegegwa', 'Kyenjojo', 'Kyotera',
+  'Lamwo', 'Lira', 'Luuka', 'Luwero', 'Lwengo', 'Lyantonde', 'Madi-Okollo',
+  'Manafwa', 'Maracha', 'Masaka', 'Masindi', 'Mayuge', 'Mbale', 'Mbarara',
+  'Mitooma', 'Mityana', 'Moroto', 'Moyo', 'Mpigi', 'Mubende', 'Mukono',
+  'Nabilatuk', 'Nakapiripirit', 'Nakaseke', 'Nakasongola', 'Namayingo',
+  'Namisindwa', 'Namutumba', 'Napak', 'Nebbi', 'Ngora', 'Ntoroko',
+  'Ntungamo', 'Nwoya', 'Obongi', 'Omoro', 'Otuke', 'Oyam', 'Pader',
+  'Pakwach', 'Pallisa', 'Rakai', 'Rubanda', 'Rubirizi', 'Rukiga',
+  'Rukungiri', 'Rwampara', 'Sembabule', 'Serere', 'Sheema', 'Sironko',
+  'Soroti', 'Tororo', 'Wakiso', 'Yumbe', 'Zombo',
+] as const
+
+const PROPERTY_TYPES = [
+  { value: '', label: 'All types' },
+  { value: 'apartment', label: 'Apartment' },
+  { value: 'house', label: 'House' },
+  { value: 'commercial', label: 'Commercial' },
+] as const
+
+const BEDROOMS_OPTIONS = [
+  { value: '', label: 'Any' },
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '4', label: '4+' },
+]
+
+// ── UGX formatting ────────────────────────────────────────────────────────────
+const fmtUGX = (v: number) =>
+  new Intl.NumberFormat('en-UG', {
+    style: 'currency',
+    currency: 'UGX',
+    maximumFractionDigits: 0,
+  }).format(v)
+
+const MIN_RENT = 100_000
+const MAX_RENT = 10_000_000
+const RENT_STEP = 50_000
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Unit {
+  id: string
+  unit_number: string
+  floor: number | null
+  status: 'vacant' | 'occupied'
+}
+
 interface Property {
   id: string
   title: string
-  address: string
+  description: string
   district: string
-  division: string | null
-  bedrooms: number
-  bathrooms: number
-  rent_amount: number
-  first_photo_url: string | null
-  available_units: number
+  address: string
+  type: string
+  bedrooms: number | null
+  images: string[]
+  vacant_unit_count: number
+  units: Unit[]
+  base_monthly_rent_ugx?: number
 }
 
 interface Filters {
-  location: string
-  min_price: number
-  max_price: number
-  bedrooms: string   // '', '1', '2', '3', '4'
-  availability: boolean
+  district: string
+  type: string
+  bedrooms: string
+  minRent: number
+  maxRent: number
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-const DISTRICTS = ['Kampala', 'Wakiso', 'Entebbe', 'Jinja', 'Mukono', 'Gulu', 'Mbarara']
-const BEDROOM_OPTIONS = [
-  { label: 'Any',  value: '' },
-  { label: '1',    value: '1' },
-  { label: '2',    value: '2' },
-  { label: '3',    value: '3' },
-  { label: '4+',   value: '4' },
-]
-const MAX_PRICE = 10_000_000   // UGX 10 M ceiling for slider
-const PRICE_STEP = 50_000
+// ── Component ─────────────────────────────────────────────────────────────────
+export default function SearchPage() {
+  const router       = useRouter()
+  const searchParams = useSearchParams()
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat('en-UG', { style: 'decimal' }).format(n)
+  const [filters, setFilters] = useState<Filters>({
+    district: searchParams.get('district') ?? '',
+    type:     searchParams.get('type')     ?? '',
+    bedrooms: searchParams.get('bedrooms') ?? '',
+    minRent:  Number(searchParams.get('min_rent')) || MIN_RENT,
+    maxRent:  Number(searchParams.get('max_rent')) || MAX_RENT,
+  })
 
-// ── Skeleton card ─────────────────────────────────────────────────────────────
-function SkeletonCard() {
+  const [properties, setProperties] = useState<Property[]>([])
+  const [loading,    setLoading]    = useState(false)
+  const [error,      setError]      = useState<string | null>(null)
+  const [totalCount, setTotalCount] = useState(0)
+
+  const abortRef = useRef<AbortController | null>(null)
+
+  const buildParams = useCallback((f: Filters) => {
+    const p = new URLSearchParams()
+    if (f.district) p.set('district', f.district)
+    if (f.type)     p.set('type',     f.type)
+    if (f.bedrooms) p.set('bedrooms', f.bedrooms)
+    if (f.minRent > MIN_RENT) p.set('min_rent', String(f.minRent))
+    if (f.maxRent < MAX_RENT) p.set('max_rent', String(f.maxRent))
+    return p
+  }, [])
+
+  const fetchProperties = useCallback(async (f: Filters) => {
+    abortRef.current?.abort()
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(
+        `/api/properties/search?${buildParams(f)}`,
+        { signal: ctrl.signal }
+      )
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
+      const json = await res.json()
+      setProperties(json.data ?? [])
+      setTotalCount(json.count ?? 0)
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        setError('Failed to load properties. Please try again.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [buildParams])
+
+  // Sync URL and fetch on filter change
+  useEffect(() => {
+    const params = buildParams(filters)
+    router.replace(`/search?${params}`, { scroll: false })
+    fetchProperties(filters)
+  }, [filters]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setFilter = <K extends keyof Filters>(key: K, value: Filters[K]) =>
+    setFilters((prev) => ({ ...prev, [key]: value }))
+
+  const clearFilters = () =>
+    setFilters({ district: '', type: '', bedrooms: '', minRent: MIN_RENT, maxRent: MAX_RENT })
+
+  const hasActiveFilters =
+    filters.district || filters.type || filters.bedrooms ||
+    filters.minRent > MIN_RENT || filters.maxRent < MAX_RENT
+
   return (
-    <div className="skeleton-card">
-      <div className="sk-img" />
-      <div className="sk-body">
-        <div className="sk-line sk-title" />
-        <div className="sk-line sk-sub" />
-        <div className="sk-line sk-sub short" />
-        <div className="sk-footer">
-          <div className="sk-line sk-price" />
-          <div className="sk-btn" />
+    <div className="min-h-screen bg-[#F5F2EE]">
+      {/* Header */}
+      <header className="bg-white border-b border-[#E0D9D0] px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <h1 className="text-xl font-semibold text-[#1A1612] tracking-tight">
+            Property Search
+          </h1>
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="text-sm text-[#8B6F47] hover:text-[#1A1612] transition-colors underline underline-offset-2"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto px-6 py-8 flex gap-8">
+        {/* ── Filter Sidebar ─────────────────────────────────────────────── */}
+        <aside className="w-72 shrink-0">
+          <div className="bg-white rounded-2xl border border-[#E0D9D0] p-6 space-y-6 sticky top-6">
+            <h2 className="text-sm font-semibold text-[#1A1612] uppercase tracking-widest">
+              Filters
+            </h2>
+
+            {/* District */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-[#6B5744] uppercase tracking-wider">
+                District
+              </label>
+              <select
+                value={filters.district}
+                onChange={(e) => setFilter('district', e.target.value)}
+                className="w-full rounded-lg border border-[#D9CFC4] bg-[#FAF8F5] px-3 py-2.5 text-sm text-[#1A1612] focus:outline-none focus:ring-2 focus:ring-[#8B6F47] focus:border-transparent appearance-none cursor-pointer"
+              >
+                <option value="">All districts</option>
+                {UGANDA_DISTRICTS.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Property type */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-[#6B5744] uppercase tracking-wider">
+                Property type
+              </label>
+              <div className="grid grid-cols-1 gap-1.5">
+                {PROPERTY_TYPES.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setFilter('type', value)}
+                    className={`text-left px-3 py-2 rounded-lg text-sm transition-all ${
+                      filters.type === value
+                        ? 'bg-[#8B6F47] text-white font-medium'
+                        : 'bg-[#FAF8F5] text-[#4A3728] hover:bg-[#F0E8DE] border border-[#D9CFC4]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Bedrooms */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-[#6B5744] uppercase tracking-wider">
+                Bedrooms
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {BEDROOMS_OPTIONS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setFilter('bedrooms', value)}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition-all ${
+                      filters.bedrooms === value
+                        ? 'bg-[#8B6F47] text-white font-medium'
+                        : 'bg-[#FAF8F5] text-[#4A3728] hover:bg-[#F0E8DE] border border-[#D9CFC4]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Rent range */}
+            <div className="space-y-3">
+              <label className="text-xs font-medium text-[#6B5744] uppercase tracking-wider">
+                Monthly rent (UGX)
+              </label>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-[#8B7355]">
+                  <span>{fmtUGX(filters.minRent)}</span>
+                  <span>{fmtUGX(filters.maxRent)}</span>
+                </div>
+
+                {/* Min slider */}
+                <input
+                  type="range"
+                  min={MIN_RENT}
+                  max={MAX_RENT}
+                  step={RENT_STEP}
+                  value={filters.minRent}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    setFilter('minRent', Math.min(v, filters.maxRent - RENT_STEP))
+                  }}
+                  className="w-full accent-[#8B6F47] cursor-pointer"
+                />
+
+                {/* Max slider */}
+                <input
+                  type="range"
+                  min={MIN_RENT}
+                  max={MAX_RENT}
+                  step={RENT_STEP}
+                  value={filters.maxRent}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    setFilter('maxRent', Math.max(v, filters.minRent + RENT_STEP))
+                  }}
+                  className="w-full accent-[#8B6F47] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="text-[10px] text-[#8B7355] mb-1 block">Min</label>
+                  <input
+                    type="number"
+                    value={filters.minRent}
+                    min={MIN_RENT}
+                    max={filters.maxRent - RENT_STEP}
+                    step={RENT_STEP}
+                    onChange={(e) => setFilter('minRent', Number(e.target.value))}
+                    className="w-full rounded-md border border-[#D9CFC4] bg-[#FAF8F5] px-2 py-1.5 text-xs text-[#1A1612] focus:outline-none focus:ring-1 focus:ring-[#8B6F47]"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] text-[#8B7355] mb-1 block">Max</label>
+                  <input
+                    type="number"
+                    value={filters.maxRent}
+                    min={filters.minRent + RENT_STEP}
+                    max={MAX_RENT}
+                    step={RENT_STEP}
+                    onChange={(e) => setFilter('maxRent', Number(e.target.value))}
+                    className="w-full rounded-md border border-[#D9CFC4] bg-[#FAF8F5] px-2 py-1.5 text-xs text-[#1A1612] focus:outline-none focus:ring-1 focus:ring-[#8B6F47]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Results ────────────────────────────────────────────────────── */}
+        <main className="flex-1 min-w-0">
+          {/* Result count / status bar */}
+          <div className="flex items-center justify-between mb-5">
+            <p className="text-sm text-[#6B5744]">
+              {loading ? (
+                <span className="animate-pulse">Searching…</span>
+              ) : (
+                <>
+                  <span className="font-semibold text-[#1A1612]">{totalCount}</span>
+                  {' '}propert{totalCount === 1 ? 'y' : 'ies'} with vacant units
+                  {filters.district && (
+                    <> in <span className="font-medium text-[#1A1612]">{filters.district}</span></>
+                  )}
+                </>
+              )}
+            </p>
+          </div>
+
+          {error && (
+            <div className="rounded-xl bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm mb-5">
+              {error}
+            </div>
+          )}
+
+          {/* Property grid */}
+          {!loading && !error && properties.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="w-16 h-16 rounded-full bg-[#E8DDD4] flex items-center justify-center mb-4">
+                <svg className="w-8 h-8 text-[#8B6F47]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+              </div>
+              <p className="text-[#4A3728] font-medium">No properties found</p>
+              <p className="text-[#8B7355] text-sm mt-1">Try adjusting filters</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {properties.map((property) => (
+              <PropertyCard key={property.id} property={property} />
+            ))}
+
+            {/* Loading skeletons */}
+            {loading &&
+              Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-2xl border border-[#E0D9D0] overflow-hidden animate-pulse">
+                  <div className="h-44 bg-[#E8DDD4]" />
+                  <div className="p-5 space-y-3">
+                    <div className="h-4 bg-[#E8DDD4] rounded w-3/4" />
+                    <div className="h-3 bg-[#E8DDD4] rounded w-1/2" />
+                    <div className="h-3 bg-[#E8DDD4] rounded w-2/3" />
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </main>
       </div>
     </div>
   )
 }
 
 // ── Property card ─────────────────────────────────────────────────────────────
-function PropertyCard({ p }: { p: Property }) {
+function PropertyCard({ property }: { property: Property }) {
+  const thumb = property.images?.[0]
+
   return (
-    <article className="prop-card">
-      <div className="card-img-wrap">
-        {p.first_photo_url ? (
-          <Image
-            src={p.first_photo_url}
-            alt={p.title}
-            fill
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-            className="card-img"
+    <a
+      href={`/properties/${property.id}`}
+      className="group bg-white rounded-2xl border border-[#E0D9D0] overflow-hidden hover:shadow-lg hover:border-[#C4B49A] transition-all duration-200 block"
+    >
+      {/* Image */}
+      <div className="relative h-44 bg-[#E8DDD4] overflow-hidden">
+        {thumb ? (
+          <img
+            src={thumb}
+            alt={property.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
         ) : (
-          <div className="card-img-placeholder">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M3 9.75L12 3l9 6.75V21a.75.75 0 01-.75.75H3.75A.75.75 0 013 21V9.75z" />
-              <path d="M9 21V12h6v9" />
+          <div className="w-full h-full flex items-center justify-center">
+            <svg className="w-10 h-10 text-[#B8A898]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
             </svg>
           </div>
         )}
-        {p.available_units > 0 && (
-          <span className="availability-badge">
-            {p.available_units} unit{p.available_units > 1 ? 's' : ''} free
-          </span>
-        )}
+        {/* Type badge */}
+        <span className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm text-[#4A3728] text-xs font-medium px-2.5 py-1 rounded-full capitalize">
+          {property.type}
+        </span>
+        {/* Vacant units badge */}
+        <span className="absolute top-3 right-3 bg-[#2D6A4F]/90 text-white text-xs font-medium px-2.5 py-1 rounded-full">
+          {property.vacant_unit_count} vacant
+        </span>
       </div>
 
-      <div className="card-body">
-        <h3 className="card-title">{p.title}</h3>
-        <p className="card-location">
-          <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13">
-            <path fillRule="evenodd" d="M9.69 18.933l.003.001C9.89 19.01 10 19 10 19s.11.01.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.018.008.006.003zM10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" clipRule="evenodd" />
+      {/* Content */}
+      <div className="p-5">
+        <h3 className="font-semibold text-[#1A1612] text-base leading-snug line-clamp-1 group-hover:text-[#6B3F1A] transition-colors">
+          {property.title}
+        </h3>
+
+        <div className="flex items-center gap-1 mt-1.5">
+          <svg className="w-3.5 h-3.5 text-[#8B7355] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
-          {p.district}{p.division ? `, ${p.division}` : ''}
-        </p>
-        <p className="card-address">{p.address}</p>
-
-        <div className="card-meta">
-          <span>
-            <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13">
-              <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z" />
-            </svg>
-            {p.bedrooms} bed{p.bedrooms !== 1 ? 's' : ''}
-          </span>
-          <span>
-            <svg viewBox="0 0 20 20" fill="currentColor" width="13" height="13">
-              <path fillRule="evenodd" d="M6 3a1 1 0 011-1h.01a1 1 0 010 2H7a1 1 0 01-1-1zm2 3a1 1 0 00-2 0v1a2 2 0 00-2 2v1a2 2 0 00-2 2v.683a3.7 3.7 0 011.055.485 1.704 1.704 0 001.89 0 3.704 3.704 0 014.11 0 1.704 1.704 0 001.89 0 3.704 3.704 0 014.11 0 1.704 1.704 0 001.89 0A3.7 3.7 0 0118 12.683V12a2 2 0 00-2-2V9a2 2 0 00-2-2V6a1 1 0 10-2 0v1h-1V6a1 1 0 10-2 0v1H8V6zm10 8.868a3.704 3.704 0 01-4.055-.036 1.704 1.704 0 00-1.89 0 3.704 3.704 0 01-4.11 0 1.704 1.704 0 00-1.89 0A3.7 3.7 0 012 14.868V17a1 1 0 001 1h14a1 1 0 001-1v-2.132z" clipRule="evenodd" />
-            </svg>
-            {p.bathrooms} bath{p.bathrooms !== 1 ? 's' : ''}
-          </span>
+          <span className="text-xs text-[#8B7355] truncate">{property.district}, Uganda</span>
         </div>
 
-        <div className="card-footer">
-          <div className="card-price">
-            <span className="currency">UGX</span>
-            <span className="amount">{fmt(p.rent_amount)}</span>
-            <span className="period">/mo</span>
-          </div>
-          <Link href={`/properties/${p.id}`} className="view-btn">
-            View Details
-          </Link>
-        </div>
-      </div>
-    </article>
-  )
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
-export default function SearchPage() {
-  const [filters, setFilters] = useState<Filters>({
-    location: '',
-    min_price: 0,
-    max_price: MAX_PRICE,
-    bedrooms: '',
-    availability: false,
-  })
-  const [properties, setProperties] = useState<Property[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState<string | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const fetchProperties = useCallback(async (f: Filters) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const params = new URLSearchParams()
-      if (f.location)       params.set('location',     f.location)
-      if (f.min_price > 0)  params.set('min_price',    String(f.min_price))
-      if (f.max_price < MAX_PRICE) params.set('max_price', String(f.max_price))
-      if (f.bedrooms)       params.set('bedrooms',     f.bedrooms)
-      if (f.availability)   params.set('availability', 'true')
-
-      const res = await fetch(`/api/properties/search?${params.toString()}`)
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
-      const json = await res.json()
-      setProperties(json.properties ?? [])
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load properties')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  // Debounce filter changes (price slider)
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => fetchProperties(filters), 350)
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [filters, fetchProperties])
-
-  const set = <K extends keyof Filters>(key: K, value: Filters[K]) =>
-    setFilters((prev) => ({ ...prev, [key]: value }))
-
-  const resetFilters = () =>
-    setFilters({ location: '', min_price: 0, max_price: MAX_PRICE, bedrooms: '', availability: false })
-
-  // ── Sidebar ──────────────────────────────────────────────────────────────
-  const Sidebar = (
-    <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
-      <div className="sidebar-header">
-        <h2 className="sidebar-title">Filters</h2>
-        <button className="reset-btn" onClick={resetFilters}>Reset</button>
-      </div>
-
-      {/* District */}
-      <div className="filter-group">
-        <label className="filter-label">District</label>
-        <select
-          className="filter-select"
-          value={filters.location}
-          onChange={(e) => set('location', e.target.value)}
-        >
-          <option value="">All districts</option>
-          {DISTRICTS.map((d) => (
-            <option key={d} value={d}>{d}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Price range */}
-      <div className="filter-group">
-        <label className="filter-label">
-          Price range
-          <span className="filter-value-hint">
-            UGX {fmt(filters.min_price)} – {filters.max_price >= MAX_PRICE ? 'Any' : `UGX ${fmt(filters.max_price)}`}
-          </span>
-        </label>
-        <div className="range-wrap">
-          <span className="range-tag">Min</span>
-          <input
-            type="range"
-            min={0}
-            max={MAX_PRICE}
-            step={PRICE_STEP}
-            value={filters.min_price}
-            onChange={(e) => {
-              const v = Number(e.target.value)
-              if (v <= filters.max_price) set('min_price', v)
-            }}
-            className="range-input"
-          />
-        </div>
-        <div className="range-wrap">
-          <span className="range-tag">Max</span>
-          <input
-            type="range"
-            min={0}
-            max={MAX_PRICE}
-            step={PRICE_STEP}
-            value={filters.max_price}
-            onChange={(e) => {
-              const v = Number(e.target.value)
-              if (v >= filters.min_price) set('max_price', v)
-            }}
-            className="range-input"
-          />
-        </div>
-      </div>
-
-      {/* Bedrooms */}
-      <div className="filter-group">
-        <label className="filter-label">Bedrooms</label>
-        <div className="bed-options">
-          {BEDROOM_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              className={`bed-btn ${filters.bedrooms === opt.value ? 'bed-btn--active' : ''}`}
-              onClick={() => set('bedrooms', opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Availability */}
-      <div className="filter-group filter-group--row">
-        <label className="filter-label" htmlFor="avail-toggle">Available units only</label>
-        <button
-          id="avail-toggle"
-          role="switch"
-          aria-checked={filters.availability}
-          className={`toggle ${filters.availability ? 'toggle--on' : ''}`}
-          onClick={() => set('availability', !filters.availability)}
-        >
-          <span className="toggle-thumb" />
-        </button>
-      </div>
-    </aside>
-  )
-
-  // ── Render ───────────────────────────────────────────────────────────────
-  return (
-    <>
-      <style>{styles}</style>
-      <div className="page">
-        {/* Top bar (mobile) */}
-        <header className="topbar">
-          <h1 className="topbar-title">Find a Property</h1>
-          <button className="filter-toggle-btn" onClick={() => setSidebarOpen((o) => !o)}>
-            <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-              <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3 5a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm2 5a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" clipRule="evenodd" />
-            </svg>
-            Filters
-          </button>
-        </header>
-
-        {/* Backdrop (mobile) */}
-        {sidebarOpen && (
-          <div className="backdrop" onClick={() => setSidebarOpen(false)} />
-        )}
-
-        <div className="layout">
-          {Sidebar}
-
-          <main className="main">
-            {/* Result count */}
-            <div className="results-meta">
-              {!loading && !error && (
-                <span>{properties.length} propert{properties.length === 1 ? 'y' : 'ies'} found</span>
-              )}
-            </div>
-
-            {error && (
-              <div className="error-state">
-                <p>{error}</p>
-                <button onClick={() => fetchProperties(filters)}>Retry</button>
-              </div>
+        <div className="flex items-center justify-between mt-4">
+          <div>
+            {property.base_monthly_rent_ugx ? (
+              <>
+                <span className="text-lg font-bold text-[#1A1612]">
+                  {fmtUGX(property.base_monthly_rent_ugx)}
+                </span>
+                <span className="text-xs text-[#8B7355] ml-1">/month</span>
+              </>
+            ) : (
+              <span className="text-sm text-[#8B7355]">Rent on request</span>
             )}
-
-            <div className="grid">
-              {loading
-                ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
-                : properties.length === 0 && !error
-                ? (
-                  <div className="empty-state">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48">
-                      <path d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803 7.5 7.5 0 0015.803 15.803z" />
-                    </svg>
-                    <p>No properties match your filters.</p>
-                    <button onClick={resetFilters}>Clear filters</button>
-                  </div>
-                )
-                : properties.map((p) => <PropertyCard key={p.id} p={p} />)
-              }
-            </div>
-          </main>
+          </div>
+          {property.bedrooms && (
+            <span className="text-xs text-[#6B5744] bg-[#F0E8DE] px-2.5 py-1 rounded-full">
+              {property.bedrooms} bed{property.bedrooms > 1 ? 's' : ''}
+            </span>
+          )}
         </div>
       </div>
-    </>
+    </a>
   )
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
-const styles = `
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg:          #F7F6F3;
-    --surface:     #FFFFFF;
-    --border:      #E4E2DC;
-    --text:        #1A1A18;
-    --text-muted:  #6B6A65;
-    --accent:      #1E6B45;
-    --accent-light:#E8F5EE;
-    --accent-hover:#175937;
-    --badge-bg:    #1E6B45;
-    --badge-text:  #FFFFFF;
-    --radius:      12px;
-    --radius-sm:   8px;
-    --shadow:      0 1px 4px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.05);
-    --sidebar-w:   272px;
-    --font:        'Georgia', serif;
-    --font-ui:     system-ui, -apple-system, sans-serif;
-  }
-
-  body { background: var(--bg); color: var(--text); font-family: var(--font-ui); }
-
-  /* Page shell */
-  .page { min-height: 100vh; display: flex; flex-direction: column; }
-
-  /* Topbar */
-  .topbar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; z-index: 30;
-  }
-  .topbar-title { font-family: var(--font); font-size: 1.2rem; font-weight: normal; letter-spacing: -0.02em; }
-  .filter-toggle-btn {
-    display: none; align-items: center; gap: 6px;
-    padding: 7px 14px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--surface);
-    font-size: 0.875rem; cursor: pointer; color: var(--text);
-  }
-
-  /* Layout */
-  .layout { display: flex; flex: 1; max-width: 1280px; margin: 0 auto; width: 100%; padding: 24px 20px; gap: 24px; align-items: flex-start; }
-
-  /* Sidebar */
-  .sidebar {
-    width: var(--sidebar-w); flex-shrink: 0;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 20px; position: sticky; top: 72px;
-  }
-  .sidebar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-  .sidebar-title { font-family: var(--font); font-size: 1rem; font-weight: normal; }
-  .reset-btn { font-size: 0.8rem; color: var(--accent); background: none; border: none; cursor: pointer; padding: 2px 4px; }
-  .reset-btn:hover { text-decoration: underline; }
-
-  /* Filter groups */
-  .filter-group { margin-bottom: 22px; }
-  .filter-group--row { display: flex; align-items: center; justify-content: space-between; }
-  .filter-label {
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--text-muted); margin-bottom: 10px;
-  }
-  .filter-value-hint { font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 0.78rem; color: var(--accent); }
-
-  .filter-select {
-    width: 100%; padding: 9px 12px; border: 1px solid var(--border);
-    border-radius: var(--radius-sm); background: var(--bg); font-size: 0.9rem;
-    color: var(--text); appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 20 20' fill='%236B6A65'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 10px center; cursor: pointer;
-  }
-  .filter-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
-
-  /* Range */
-  .range-wrap { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .range-tag { font-size: 0.75rem; color: var(--text-muted); width: 24px; flex-shrink: 0; }
-  .range-input { flex: 1; accent-color: var(--accent); cursor: pointer; }
-
-  /* Bedroom buttons */
-  .bed-options { display: flex; gap: 8px; flex-wrap: wrap; }
-  .bed-btn {
-    flex: 1; min-width: 44px; padding: 7px 4px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--bg); font-size: 0.875rem;
-    cursor: pointer; color: var(--text); transition: all 0.15s;
-  }
-  .bed-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .bed-btn--active { background: var(--accent); border-color: var(--accent); color: #fff; }
-
-  /* Toggle */
-  .toggle {
-    width: 44px; height: 24px; border-radius: 12px; border: none;
-    background: var(--border); cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0;
-  }
-  .toggle--on { background: var(--accent); }
-  .toggle-thumb {
-    position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
-    border-radius: 50%; background: #fff; transition: transform 0.2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  }
-  .toggle--on .toggle-thumb { transform: translateX(20px); }
-
-  /* Main area */
-  .main { flex: 1; min-width: 0; }
-  .results-meta { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; min-height: 20px; }
-
-  /* Grid */
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
-
-  /* Property card */
-  .prop-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-    overflow: hidden; display: flex; flex-direction: column;
-    box-shadow: var(--shadow); transition: transform 0.2s, box-shadow 0.2s;
-  }
-  .prop-card:hover { transform: translateY(-3px); box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-
-  .card-img-wrap { position: relative; height: 190px; background: #EAE9E4; flex-shrink: 0; }
-  .card-img { object-fit: cover; }
-  .card-img-placeholder {
-    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #C5C3BB;
-  }
-  .card-img-placeholder svg { width: 40px; height: 40px; }
-
-  .availability-badge {
-    position: absolute; top: 10px; right: 10px;
-    background: var(--badge-bg); color: var(--badge-text);
-    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em;
-    padding: 3px 9px; border-radius: 20px;
-  }
-
-  .card-body { padding: 14px 16px 16px; display: flex; flex-direction: column; flex: 1; }
-  .card-title { font-family: var(--font); font-size: 1rem; font-weight: normal; margin-bottom: 5px; line-height: 1.3; }
-  .card-location {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 0.8rem; font-weight: 600; color: var(--accent); margin-bottom: 3px;
-  }
-  .card-address { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px; }
-
-  .card-meta { display: flex; gap: 14px; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 14px; }
-  .card-meta span { display: flex; align-items: center; gap: 4px; }
-
-  .card-footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; }
-  .card-price { display: flex; align-items: baseline; gap: 2px; }
-  .currency { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; }
-  .amount { font-size: 1.1rem; font-weight: 700; font-family: var(--font); letter-spacing: -0.02em; }
-  .period { font-size: 0.75rem; color: var(--text-muted); }
-
-  .view-btn {
-    padding: 8px 16px; background: var(--accent); color: #fff;
-    border-radius: var(--radius-sm); font-size: 0.82rem; font-weight: 500;
-    text-decoration: none; transition: background 0.15s;
-  }
-  .view-btn:hover { background: var(--accent-hover); }
-
-  /* Skeleton */
-  @keyframes shimmer { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
-  .skeleton-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
-  }
-  .sk-img { height: 190px; }
-  .sk-body { padding: 14px 16px 16px; }
-  .sk-line {
-    border-radius: 4px; margin-bottom: 10px;
-    background: linear-gradient(90deg, #EDECEA 25%, #E0DED9 50%, #EDECEA 75%);
-    background-size: 400px 100%;
-    animation: shimmer 1.4s infinite;
-  }
-  .sk-title { height: 18px; width: 75%; }
-  .sk-sub   { height: 13px; width: 55%; }
-  .sk-sub.short { width: 40%; }
-  .sk-footer { display: flex; justify-content: space-between; margin-top: 14px; }
-  .sk-price { height: 22px; width: 45%; margin-bottom: 0; }
-  .sk-btn   { height: 32px; width: 30%; border-radius: var(--radius-sm);
-    background: linear-gradient(90deg, #EDECEA 25%, #E0DED9 50%, #EDECEA 75%);
-    background-size: 400px 100%; animation: shimmer 1.4s infinite;
-  }
-
-  /* Empty / error */
-  .empty-state, .error-state {
-    grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center;
-    gap: 14px; padding: 60px 20px; color: var(--text-muted); text-align: center;
-  }
-  .empty-state button, .error-state button {
-    padding: 8px 20px; background: var(--accent); color: #fff;
-    border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.875rem;
-  }
-
-  /* Backdrop */
-  .backdrop {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 29;
-  }
-
-  /* ── Mobile ─────────────────────────────────────────────────────────── */
-  @media (max-width: 768px) {
-    .filter-toggle-btn { display: flex; }
-    .layout { padding: 16px; }
-
-    .sidebar {
-      position: fixed; top: 0; left: 0; bottom: 0; width: 300px; max-width: 85vw;
-      border-radius: 0; border: none; border-right: 1px solid var(--border);
-      z-index: 40; overflow-y: auto; transform: translateX(-100%); transition: transform 0.3s ease;
-    }
-    .sidebar--open { transform: translateX(0); }
-    .backdrop { display: block; }
-
-    .grid { grid-template-columns: 1fr; }
-  }
-
-  @media (max-width: 480px) {
-    .topbar { padding: 12px 16px; }
-    .grid { grid-template-columns: 1fr; }
-  }
-`

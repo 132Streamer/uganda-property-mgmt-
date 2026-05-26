@@ -1,373 +1,142 @@
 'use client'
 
-export const dynamic = 'force-dynamic';
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
-import { toast } from '@/components/ui/use-toast'
-import { Loader2, UploadCloud, X, PlusCircle, ClipboardList } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { formatDistanceToNow } from 'date-fns'
 
-type Priority = 'Low' | 'Medium' | 'High' | 'Urgent'
-type Status = 'Open' | 'In Progress' | 'Resolved'
+type MaintenanceStatus = 'submitted' | 'acknowledged' | 'in_progress' | 'resolved'
 
 interface MaintenanceRequest {
   id: string
   title: string
   description: string
-  priority: Priority
-  status: Status
-  photo_url: string | null
+  status: MaintenanceStatus
+  landlord_note: string | null
   created_at: string
   updated_at: string
-  property: {
-    id: string
+  properties: {
     name: string
-    address: string
   }
 }
 
-interface Property {
-  id: string
-  name: string
-  address: string
+const STATUS_CONFIG: Record<
+  MaintenanceStatus,
+  { label: string; className: string }
+> = {
+  submitted:    { label: 'Submitted',    className: 'bg-gray-100 text-gray-700 ring-gray-200' },
+  acknowledged: { label: 'Acknowledged', className: 'bg-blue-100 text-blue-700 ring-blue-200' },
+  in_progress:  { label: 'In Progress',  className: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  resolved:     { label: 'Resolved',     className: 'bg-emerald-100 text-emerald-700 ring-emerald-200' },
 }
 
-const PRIORITY_CONFIG: Record<Priority, { label: string; className: string }> = {
-  Low: { label: 'Low', className: 'bg-slate-100 text-slate-700 border-slate-200' },
-  Medium: { label: 'Medium', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  High: { label: 'High', className: 'bg-orange-50 text-orange-700 border-orange-200' },
-  Urgent: { label: 'Urgent', className: 'bg-red-50 text-red-700 border-red-200' },
+function StatusBadge({ status }: { status: MaintenanceStatus }) {
+  const { label, className } = STATUS_CONFIG[status] ?? STATUS_CONFIG.submitted
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${className}`}>
+      {label}
+    </span>
+  )
 }
 
-const STATUS_CONFIG: Record<Status, { label: string; className: string }> = {
-  Open: { label: 'Open', className: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-  'In Progress': { label: 'In Progress', className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  Resolved: { label: 'Resolved', className: 'bg-green-50 text-green-700 border-green-200' },
+function RequestCard({ request }: { request: MaintenanceRequest }) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-gray-900">{request.title}</h3>
+          <p className="mt-0.5 text-xs text-gray-500">{request.properties?.name}</p>
+        </div>
+        <StatusBadge status={request.status} />
+      </div>
+
+      <p className="mt-3 text-sm text-gray-600 line-clamp-2">{request.description}</p>
+
+      {request.landlord_note && (
+        <div className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          <span className="font-medium text-gray-700">Landlord note: </span>
+          {request.landlord_note}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center justify-between text-xs text-gray-400">
+        <span>Submitted {new Date(request.created_at).toLocaleDateString('en-UG', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+        {request.updated_at !== request.created_at && (
+          <span>Updated {new Date(request.updated_at).toLocaleDateString('en-UG', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function TenantMaintenancePage() {
   const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Form state
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [priority, setPriority] = useState<Priority | ''>('')
-  const [propertyId, setPropertyId] = useState('')
-  const [photoFile, setPhotoFile] = useState<File | null>(null)
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-
-  // Data state
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
   const [requests, setRequests] = useState<MaintenanceRequest[]>([])
-  const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
 
   useEffect(() => {
-    fetchData()
-  }, [])
-
-  async function fetchData() {
-    setLoading(true)
-    try {
-      // Fetch tenant's active lease properties
+    async function fetchRequests() {
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
+      if (!session) { setError('Not authenticated'); setLoading(false); return }
 
-      const { data: leases } = await supabase
-        .from('leases')
-        .select('property:properties!property_id (id, name, address)')
+      const { data, error } = await supabase
+        .from('maintenance_requests')
+        .select('*, properties(name)')
         .eq('tenant_id', session.user.id)
-        .eq('status', 'active')
+        .order('created_at', { ascending: false })
 
-      const props = (leases?.map((l: any) => l.property) ?? []) as Property[]
-      setProperties(props)
-
-      if (props.length === 1) setPropertyId(props[0].id)
-
-      // Fetch requests
-      const res = await fetch('/api/maintenance')
-      const json = await res.json()
-      if (json.data) setRequests(json.data)
-    } finally {
+      if (error) setError(error.message)
+      else setRequests(data ?? [])
       setLoading(false)
     }
-  }
 
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (file.size > 5 * 1024 * 1024) {
-      toast({ title: 'File too large', description: 'Max 5MB.', variant: 'destructive' })
-      return
-    }
-    setPhotoFile(file)
-    setPhotoPreview(URL.createObjectURL(file))
-  }
+    fetchRequests()
+  }, [supabase])
 
-  function clearPhoto() {
-    setPhotoFile(null)
-    setPhotoPreview(null)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
+  const grouped = requests.reduce<Partial<Record<MaintenanceStatus, MaintenanceRequest[]>>>(
+    (acc, r) => { (acc[r.status] ??= []).push(r); return acc },
+    {}
+  )
 
-  async function uploadPhoto(file: File): Promise<string> {
-    const ext = file.name.split('.').pop()
-    const path = `maintenance/${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('uploads').upload(path, file)
-    if (error) throw error
-    const { data } = supabase.storage.from('uploads').getPublicUrl(path)
-    return data.publicUrl
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!title || !description || !priority || !propertyId) {
-      toast({ title: 'Fill in all required fields', variant: 'destructive' })
-      return
-    }
-
-    setSubmitting(true)
-    try {
-      let photo_url: string | null = null
-      if (photoFile) {
-        photo_url = await uploadPhoto(photoFile)
-      }
-
-      const res = await fetch('/api/maintenance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description, priority, property_id: propertyId, photo_url }),
-      })
-
-      const json = await res.json()
-
-      if (!res.ok) {
-        throw new Error(json.error ?? 'Submission failed')
-      }
-
-      toast({ title: 'Request submitted', description: 'Your landlord has been notified.' })
-
-      // Reset form
-      setTitle('')
-      setDescription('')
-      setPriority('')
-      if (properties.length !== 1) setPropertyId('')
-      clearPhoto()
-
-      // Refresh list
-      await fetchData()
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' })
-    } finally {
-      setSubmitting(false)
-    }
-  }
+  const statusOrder: MaintenanceStatus[] = ['in_progress', 'acknowledged', 'submitted', 'resolved']
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
-      {/* ── Submit Form ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <PlusCircle className="h-5 w-5 text-primary" />
-            Submit Maintenance Request
-          </CardTitle>
-          <CardDescription>
-            Describe the issue and we'll notify your landlord immediately.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Property */}
-            {properties.length > 1 && (
-              <div className="space-y-1.5">
-                <Label htmlFor="property">Property <span className="text-destructive">*</span></Label>
-                <Select value={propertyId} onValueChange={setPropertyId}>
-                  <SelectTrigger id="property">
-                    <SelectValue placeholder="Select property" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {properties.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name} — {p.address}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+    <div className="mx-auto max-w-2xl px-4 py-8">
+      <h1 className="text-2xl font-bold text-gray-900">Maintenance Requests</h1>
 
-            {/* Title */}
-            <div className="space-y-1.5">
-              <Label htmlFor="title">Title <span className="text-destructive">*</span></Label>
-              <Input
-                id="title"
-                placeholder="e.g. Leaking kitchen tap"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={120}
-              />
+      {loading && (
+        <div className="mt-8 space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-32 animate-pulse rounded-lg bg-gray-100" />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p className="mt-6 text-sm text-red-600">{error}</p>
+      )}
+
+      {!loading && !error && requests.length === 0 && (
+        <p className="mt-8 text-sm text-gray-500">No maintenance requests yet.</p>
+      )}
+
+      {!loading && !error && statusOrder.map(status => {
+        const group = grouped[status]
+        if (!group?.length) return null
+        return (
+          <section key={status} className="mt-8">
+            <div className="mb-3 flex items-center gap-2">
+              <StatusBadge status={status} />
+              <span className="text-xs text-gray-400">{group.length} request{group.length !== 1 ? 's' : ''}</span>
             </div>
-
-            {/* Description */}
-            <div className="space-y-1.5">
-              <Label htmlFor="description">Description <span className="text-destructive">*</span></Label>
-              <Textarea
-                id="description"
-                placeholder="Describe the issue in detail — when it started, how severe it is, etc."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                maxLength={1000}
-              />
-              <p className="text-xs text-muted-foreground text-right">{description.length}/1000</p>
+            <div className="space-y-3">
+              {group.map(r => <RequestCard key={r.id} request={r} />)}
             </div>
-
-            {/* Priority */}
-            <div className="space-y-1.5">
-              <Label htmlFor="priority">Priority <span className="text-destructive">*</span></Label>
-              <Select value={priority} onValueChange={(v) => setPriority(v as Priority)}>
-                <SelectTrigger id="priority">
-                  <SelectValue placeholder="Select priority" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(['Low', 'Medium', 'High', 'Urgent'] as Priority[]).map((p) => (
-                    <SelectItem key={p} value={p}>{p}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Photo Upload */}
-            <div className="space-y-1.5">
-              <Label>Photo (optional)</Label>
-              {photoPreview ? (
-                <div className="relative w-40 h-40 rounded-md overflow-hidden border">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={clearPhoto}
-                    className="absolute top-1 right-1 bg-background/80 rounded-full p-0.5 hover:bg-background"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ) : (
-                <div
-                  className="flex flex-col items-center justify-center border-2 border-dashed rounded-md h-28 cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <UploadCloud className="h-6 w-6 text-muted-foreground mb-1" />
-                  <span className="text-sm text-muted-foreground">Click to upload — max 5MB</span>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handlePhotoChange}
-                  />
-                </div>
-              )}
-            </div>
-
-            <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
-              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {submitting ? 'Submitting…' : 'Submit Request'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Separator />
-
-      {/* ── Past Requests ── */}
-      <section className="space-y-4">
-        <h2 className="flex items-center gap-2 text-lg font-semibold">
-          <ClipboardList className="h-5 w-5 text-primary" />
-          My Requests
-        </h2>
-
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : requests.length === 0 ? (
-          <p className="text-muted-foreground text-sm text-center py-12">No requests yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {requests.map((req) => (
-              <Card key={req.id} className="transition-shadow hover:shadow-md">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                    <div className="space-y-1 flex-1 min-w-0">
-                      <p className="font-medium truncate">{req.title}</p>
-                      <p className="text-sm text-muted-foreground line-clamp-2">{req.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {req.property.name} · {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <Badge
-                        variant="outline"
-                        className={cn('text-xs', PRIORITY_CONFIG[req.priority].className)}
-                      >
-                        {req.priority}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className={cn('text-xs', STATUS_CONFIG[req.status].className)}
-                      >
-                        {req.status}
-                      </Badge>
-                    </div>
-                  </div>
-                  {req.photo_url && (
-                    <a
-                      href={req.photo_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-block mt-3"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={req.photo_url}
-                        alt="Attachment"
-                        className="h-20 rounded-md object-cover border hover:opacity-90 transition-opacity"
-                      />
-                    </a>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </section>
+          </section>
+        )
+      })}
     </div>
   )
 }
