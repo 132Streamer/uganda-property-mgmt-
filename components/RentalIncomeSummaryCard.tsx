@@ -14,12 +14,15 @@
  * Adjust the query if your schema differs.
  */
 
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createBrowserClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { formatUGX, calcWithholdingTax } from "@/lib/constants";
 
 export async function RentalIncomeSummaryCard() {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   const {
     data: { user },
