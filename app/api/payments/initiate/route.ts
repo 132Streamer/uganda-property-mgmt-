@@ -1,135 +1,190 @@
-// app/api/payments/initiate/route.ts
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { v4 as uuidv4 } from "uuid";
-import {
-  getAuthToken,
-  registerIPN,
-  submitOrder,
-} from "@/lib/pesapal";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+export const dynamic = "force-dynamic";
 
-interface InitiateBody {
-  lease_id: string;
-  amount: number;
-  payer_name: string;
-  payer_email: string;
-  payer_phone: string;
-  payment_type: "tenant" | "guest";
-  guest_payment_id?: string; // required when payment_type === 'guest'
+/** Obtain a Pesapal OAuth token */
+async function getPesapalToken(): Promise<string> {
+  const res = await fetch(
+    `${process.env.PESAPAL_API_URL}/api/Auth/RequestToken`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        consumer_key: process.env.PESAPAL_CONSUMER_KEY,
+        consumer_secret: process.env.PESAPAL_CONSUMER_SECRET,
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Pesapal auth failed: ${res.status}`);
+  const data = await res.json();
+  return data.token as string;
 }
 
-function buildAppUrl(path: string): string {
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-  return `${base.replace(/\/$/, "")}${path}`;
+/** Register IPN URL with Pesapal (idempotent per URL) */
+async function getIpnId(token: string): Promise<string> {
+  const ipnUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/ipn`;
+  const res = await fetch(
+    `${process.env.PESAPAL_API_URL}/api/URLSetup/RegisterIPN`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ url: ipnUrl, ipn_notification_type: "GET" }),
+    }
+  );
+  if (!res.ok) throw new Error(`IPN registration failed: ${res.status}`);
+  const data = await res.json();
+  return data.ipn_id as string;
 }
 
 export async function POST(req: NextRequest) {
-  let body: InitiateBody;
-
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+    const supabase = createRouteHandlerClient({ cookies });
+    const body = await req.json();
 
-  const { lease_id, amount, payer_name, payer_email, payer_phone, payment_type, guest_payment_id } =
-    body;
+    const {
+      invoiceId,
+      guestName,
+      guestPhone,
+      guestEmail,
+      // For authenticated flows these come from the session
+    } = body;
 
-  // --- Validation ---
-  if (!lease_id || !amount || !payer_name || !payer_email || !payer_phone || !payment_type) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 422 });
-  }
-  if (!["tenant", "guest"].includes(payment_type)) {
-    return NextResponse.json({ error: "payment_type must be 'tenant' or 'guest'" }, { status: 422 });
-  }
-  if (payment_type === "guest" && !guest_payment_id) {
-    return NextResponse.json(
-      { error: "guest_payment_id required for guest payments" },
-      { status: 422 }
-    );
-  }
-  if (amount <= 0) {
-    return NextResponse.json({ error: "amount must be positive" }, { status: 422 });
-  }
-
-  try {
-    // 1. Authenticate with Pesapal
-    const pesapalToken = await getAuthToken();
-
-    // 2. Register IPN
-    const ipnUrl = buildAppUrl("/api/payments/webhook");
-    const ipnId = await registerIPN(pesapalToken, ipnUrl);
-
-    // 3. Build a unique merchant reference
-    const merchantReference = uuidv4();
-    const callbackUrl = buildAppUrl(`/payment/callback?ref=${merchantReference}`);
-
-    // 4. Submit order
-    const order = await submitOrder({
-      token: pesapalToken,
-      ipnId,
-      merchantReference,
-      amount,
-      currency: "UGX",
-      description: `Rent payment — lease ${lease_id}`,
-      callbackUrl,
-      payerName: payer_name,
-      payerEmail: payer_email,
-      payerPhone: payer_phone,
-    });
-
-    // 5. Persist pending record
-    const commonFields = {
-      lease_id,
-      amount,
-      currency: "UGX",
-      payer_name,
-      payer_email,
-      payer_phone,
-      merchant_reference: merchantReference,
-      order_tracking_id: order.order_tracking_id,
-      status: "pending",
-      ipn_id: ipnId,
-    };
-
-    if (payment_type === "tenant") {
-      const { error: dbErr } = await supabase.from("rent_payments").insert({
-        ...commonFields,
-        payment_type: "tenant",
-      });
-      if (dbErr) throw new Error(`DB insert failed: ${dbErr.message}`);
-    } else {
-      // Update the guest_payment row with tracking info
-      const { error: dbErr } = await supabase
-        .from("guest_payments")
-        .update({
-          merchant_reference: merchantReference,
-          order_tracking_id: order.order_tracking_id,
-          payer_name,
-          payer_email,
-          payer_phone,
-          status: "pending",
-          ipn_id: ipnId,
-        })
-        .eq("id", guest_payment_id);
-      if (dbErr) throw new Error(`DB update failed: ${dbErr.message}`);
+    if (!invoiceId) {
+      return NextResponse.json({ error: "invoiceId required" }, { status: 400 });
     }
 
+    // Fetch invoice + relations
+    const { data: invoice, error: invoiceError } = await supabase
+      .from("invoices")
+      .select(
+        `
+        id,
+        amount_due,
+        currency,
+        description,
+        tenant_id,
+        property_units (
+          unit_number,
+          properties ( name )
+        ),
+        tenants:profiles!invoices_tenant_id_fkey (
+          full_name,
+          email,
+          phone
+        )
+      `
+      )
+      .eq("id", invoiceId)
+      .single();
+
+    if (invoiceError || !invoice) {
+      return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+    }
+
+    if ((invoice as any).status === "paid") {
+      return NextResponse.json({ error: "Invoice already paid" }, { status: 400 });
+    }
+
+    // Resolve payer details — guest fields take priority over tenant profile
+    const payerName: string =
+      guestName ?? (invoice as any).tenants?.full_name ?? "Tenant";
+    const payerEmail: string =
+      guestEmail ?? (invoice as any).tenants?.email ?? "";
+    const payerPhone: string =
+      guestPhone ?? (invoice as any).tenants?.phone ?? "";
+
+    const amount: number = (invoice as any).amount_due;
+    const currency: string = (invoice as any).currency ?? "UGX";
+    const description: string =
+      (invoice as any).description ??
+      `Rent – ${(invoice as any).property_units?.properties?.name}`;
+
+    // Create a pending payment record
+    const { data: payment, error: paymentError } = await supabase
+      .from("payments")
+      .insert({
+        invoice_id: invoiceId,
+        amount,
+        currency,
+        status: "pending",
+        is_guest_payment: !!guestName,
+        guest_name: guestName ?? null,
+        guest_phone: guestPhone ?? null,
+      })
+      .select("id")
+      .single();
+
+    if (paymentError || !payment) {
+      console.error("Payment record error:", paymentError);
+      return NextResponse.json(
+        { error: "Failed to create payment record" },
+        { status: 500 }
+      );
+    }
+
+    const pesapalToken = await getPesapalToken();
+    const ipnId = await getIpnId(pesapalToken);
+
+    const callbackUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/callback?paymentId=${payment.id}`;
+
+    const orderPayload = {
+      id: payment.id,
+      currency,
+      amount,
+      description,
+      callback_url: callbackUrl,
+      notification_id: ipnId,
+      billing_address: {
+        email_address: payerEmail,
+        phone_number: payerPhone,
+        first_name: payerName.split(" ")[0],
+        last_name: payerName.split(" ").slice(1).join(" ") || "",
+      },
+    };
+
+    const orderRes = await fetch(
+      `${process.env.PESAPAL_API_URL}/api/Transactions/SubmitOrderRequest`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${pesapalToken}`,
+        },
+        body: JSON.stringify(orderPayload),
+      }
+    );
+
+    if (!orderRes.ok) {
+      const errText = await orderRes.text();
+      console.error("Pesapal order error:", errText);
+      return NextResponse.json(
+        { error: "Pesapal order submission failed" },
+        { status: 502 }
+      );
+    }
+
+    const orderData = await orderRes.json();
+
+    // Persist the Pesapal tracking ID
+    await supabase
+      .from("payments")
+      .update({ pesapal_tracking_id: orderData.order_tracking_id })
+      .eq("id", payment.id);
+
     return NextResponse.json({
-      redirect_url: order.redirect_url,
-      order_tracking_id: order.order_tracking_id,
-      merchant_reference: merchantReference,
+      redirectUrl: orderData.redirect_url,
+      paymentId: payment.id,
+      trackingId: orderData.order_tracking_id,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[/api/payments/initiate]", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("initiate payment error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

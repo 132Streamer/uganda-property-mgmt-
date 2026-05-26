@@ -1,86 +1,66 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { createMiddlewareClient } from "@supabase/auth-helpers-nextjs";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ['/', '/search', '/login', '/signup']
+// Routes that require no authentication
+const PUBLIC_ROUTES = ["/guest-pay", "/search"];
 
-function isPublicPath(pathname: string): boolean {
-  if (PUBLIC_PATHS.includes(pathname)) return true
-  // /pay/[token]
-  if (pathname.startsWith('/pay/')) return true
-  return false
+// Routes open to unauthenticated users (auth pages, static, etc.)
+const AUTH_ROUTES = ["/login", "/signup", "/unauthorized"];
+
+function isPublic(pathname: string): boolean {
+  return (
+    PUBLIC_ROUTES.some((r) => pathname.startsWith(r)) ||
+    AUTH_ROUTES.some((r) => pathname.startsWith(r)) ||
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/favicon")
+  );
 }
 
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
-  let response = NextResponse.next({ request })
+export async function middleware(req: NextRequest) {
+  const res = NextResponse.next();
+  const supabase = createMiddlewareClient({ req, res });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          response = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  // Refresh session — required for Server Components to read updated tokens
+  // Refresh session — keeps cookie up to date
   const {
-    data: { user },
-  } = await supabase.auth.getUser()
+    data: { session },
+  } = await supabase.auth.getSession();
 
-  const isPublic = isPublicPath(pathname)
+  const { pathname } = req.nextUrl;
 
-  // No session — guard protected routes
-  if (!user) {
-    if (!isPublic) {
-      const loginUrl = request.nextUrl.clone()
-      loginUrl.pathname = '/login'
-      loginUrl.searchParams.set('redirectTo', pathname)
-      return NextResponse.redirect(loginUrl)
-    }
-    return response
+  // Always allow public routes
+  if (isPublic(pathname)) return res;
+
+  // No session → redirect to login
+  if (!session) {
+    const loginUrl = req.nextUrl.clone();
+    loginUrl.pathname = "/login";
+    loginUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
-  const role = user.user_metadata?.role as 'landlord' | 'tenant' | undefined
+  // Extract role from JWT user_metadata
+  const role = session.user.user_metadata?.role as string | undefined;
 
-  // Landlord hitting a tenant-only path
-  if (role === 'landlord' && pathname.startsWith('/tenant')) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/landlord/dashboard'
-    return NextResponse.redirect(url)
+  // /landlord/* — landlords only
+  if (pathname.startsWith("/landlord") && role !== "landlord") {
+    return NextResponse.redirect(new URL("/unauthorized", req.url));
   }
 
-  // Tenant hitting a landlord-only path
-  if (role === 'tenant' && pathname.startsWith('/landlord')) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/tenant/portal'
-    return NextResponse.redirect(url)
+  // /tenant/* — tenants only
+  if (pathname.startsWith("/tenant") && role !== "tenant") {
+    return NextResponse.redirect(new URL("/unauthorized", req.url));
   }
 
-  return response
+  return res;
 }
 
 export const config = {
   matcher: [
     /*
-     * Match all paths except:
-     * - _next/static
-     * - _next/image
-     * - favicon.ico
-     * - public assets (png, jpg, svg, etc.)
+     * Match all paths except Next.js internals and static files.
+     * Adjust if you have additional static asset paths.
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
-}
+};
