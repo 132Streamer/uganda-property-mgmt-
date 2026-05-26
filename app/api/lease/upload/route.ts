@@ -1,10 +1,13 @@
-import { createClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
 
 export async function POST(request: NextRequest) {
-  const supabase = createClient({ cookies });
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) {

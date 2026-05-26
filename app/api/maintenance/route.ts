@@ -1,4 +1,4 @@
-import { createServerClient } from '@supabase/ssr'
+import { createBrowserClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
@@ -9,7 +9,10 @@ const resend = new Resend(process.env.RESEND_API_KEY)
 // Landlord → all requests for their properties
 // Tenant   → their own requests
 export async function GET(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
   const {
     data: { session },
@@ -130,7 +133,10 @@ export async function GET(request: NextRequest) {
 // ─── POST ───────────────────────────────────────────────────────────────────
 // Tenant submits a new maintenance request
 export async function POST(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   const {
     data: { session },
@@ -208,7 +214,7 @@ export async function POST(request: NextRequest) {
     .eq('id', property_id)
     .single()
 
-  const landlord = property?.landlord as { full_name: string; email: string } | null
+  const landlord = property?.landlord as unknown as { full_name: string; email: string } | null
 
   if (landlord?.email) {
     await resend.emails.send({
@@ -235,7 +241,10 @@ export async function POST(request: NextRequest) {
 // ─── PATCH ──────────────────────────────────────────────────────────────────
 // Landlord updates request status
 export async function PATCH(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   const {
     data: { session },
@@ -300,7 +309,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Request not found' }, { status: 404 })
   }
 
-  const property = existing.property as { name: string; address: string; landlord_id: string }
+  const property = existing.property as unknown as { name: string; address: string; landlord_id: string }
 
   if (property.landlord_id !== userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -319,7 +328,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   // Email tenant
-  const tenant = existing.tenant as { full_name: string; email: string }
+  const tenant = existing.tenant as unknown as { full_name: string; email: string }
 
   if (tenant?.email) {
     await resend.emails.send({

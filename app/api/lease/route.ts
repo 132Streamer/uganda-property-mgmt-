@@ -1,4 +1,4 @@
-import { createServerClient } from "@supabase/ssr";
+import { createBrowserClient } from "@supabase/ssr";
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -7,7 +7,10 @@ const BUCKET = 'lease-docs'
 
 // POST /api/lease — landlord uploads PDF
 export async function POST(req: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   const {
     data: { session },
@@ -94,7 +97,10 @@ export async function POST(req: NextRequest) {
 
 // GET /api/lease?tenancy_id=xxx — tenant fetches their lease docs
 export async function GET(req: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   const {
     data: { session },

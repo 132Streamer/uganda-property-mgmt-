@@ -1,4 +1,5 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+
+import { createBrowserClient } from "@supabase/ssr";
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
@@ -22,7 +23,10 @@ const STATUS_DESCRIPTIONS: Record<MaintenanceStatus, string> = {
 }
 
 export async function PATCH(req: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies })
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   // Verify session
   const { data: { session }, error: sessionError } = await supabase.auth.getSession()
