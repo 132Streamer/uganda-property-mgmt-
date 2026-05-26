@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+export const dynamic = 'force-dynamic'
 
 // ── Uganda districts ─────────────────────────────────────────────────────────
 const UGANDA_DISTRICTS = [
