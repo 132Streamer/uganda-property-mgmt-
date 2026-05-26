@@ -13,7 +13,7 @@ function formatDate(date: string) {
 }
 
 export default async function TenantLeasePage() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) redirect('/login');

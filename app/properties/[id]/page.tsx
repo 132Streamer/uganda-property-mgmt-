@@ -48,7 +48,7 @@ function formatDate(date: string) {
 
 export default async function PropertyPage({ params }: PageProps) {
   const { id: propertyId } = params;
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) redirect('/login');
