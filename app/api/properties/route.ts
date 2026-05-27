@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { z } from 'zod'
+import { title } from 'process'
 
 const CreatePropertySchema = z.object({
-  name: z.string().min(1, 'Name is required'),
+  title: z.string().min(1, 'Name is required'),
   address: z.string().min(1, 'Address is required'),
   district: z.string().min(1, 'District is required'),
   description: z.string().optional(),
@@ -94,14 +95,23 @@ export async function POST(request: NextRequest) {
   }
 
   const { data, error } = await supabase
-    .from('properties')
-    .insert({
-      ...parsed.data,
-      landlord_id: user.id,
-      status: 'available',
-    })
-    .select()
-    .single()
+  .from('properties')
+  .insert({
+    landlord_id: user.id,
+    title: parsed.data.title,          // was: name
+    description: parsed.data.description,
+    address: parsed.data.address,
+    district: parsed.data.district,
+    city: parsed.data.district,        // city is required in DB — using district as fallback
+    monthly_rent: parsed.data.rent_ugx, // was: rent_ugx (wrong column name)
+    bedrooms: parsed.data.bedrooms,
+    bathrooms: parsed.data.bathrooms,
+    property_type: parsed.data.property_type,
+    photos: parsed.data.photos,
+    status: 'available',
+  })
+  .select()
+  .single()
 
   if (error) {
     console.error('Property creation error:', error)
