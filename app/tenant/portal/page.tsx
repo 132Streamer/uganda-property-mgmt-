@@ -10,54 +10,67 @@ import { LeaseDocumentCard } from '@/components/tenant/lease-document-card'
 import { AlertCircle, MapPin, User, Calendar, Phone } from 'lucide-react'
 import Link from 'next/link'
 
-// Mock data - Replace with real data from Supabase
-const mockPayments = [
-  {
-    id: '1',
-    date: '2024-05-20',
-    amount: 1500000,
-    status: 'paid' as const,
-    method: 'MTN Mobile Money'
-  },
-  {
-    id: '2',
-    date: '2024-04-20',
-    amount: 1500000,
-    status: 'paid' as const,
-    method: 'Airtel Money'
-  },
-  {
-    id: '3',
-    date: '2024-03-20',
-    amount: 1500000,
-    status: 'paid' as const,
-    method: 'Bank Transfer'
-  },
-]
+// --- Types ---
+type PaymentStatus = 'paid' | 'pending' | 'overdue'
+type RentStatus = 'pending' | 'overdue' | 'paid'
 
-const mockOpenRequests = [
-  {
-    id: '1',
-    issue: 'Leaking bathroom faucet',
-    status: 'pending',
-    submittedDate: '2024-05-18'
-  },
-  {
-    id: '2',
-    issue: 'Bedroom light switch not working',
-    status: 'in_progress',
-    submittedDate: '2024-05-15'
-  }
-]
+interface Payment {
+  id: string
+  date: string
+  amount: number
+  status: PaymentStatus
+  method: string
+}
 
-export default function TenantPortal() {
-  const propertyAddress = 'Tower Road, Kampala'
-  const landlordName = 'John Mutua'
-  const landlordPhone = '+256 701 234567'
-  const rentalAmount = 1500000 // UGX
-  const leaseExpiryDate = '2025-01-14'
-  const currentRentStatus = 'pending' // pending, overdue, paid
-  const openRequestsCount = mockOpenRequests.length
+interface MaintenanceRequest {
+  id: string
+  issue: string
+  status: 'pending' | 'in_progress'
+  submittedDate: string
+}
+
+interface TenantPortalProps {
+  propertyAddress?: string
+  landlordName?: string
+  landlordPhone?: string
+  rentalAmount?: number
+  leaseExpiryDate?: string
+  currentRentStatus?: RentStatus
+  payments?: Payment[]
+  openRequests?: MaintenanceRequest[]
+  leaseDocumentName?: string
+  leaseUploadDate?: string
+  onDownloadLease?: () => void
+  onSubmitMaintenance?: (data: unknown) => void
+}
+
+export default function TenantPortal({
+  propertyAddress = '',
+  landlordName = '',
+  landlordPhone = '',
+  rentalAmount = 0,
+  leaseExpiryDate = '',
+  currentRentStatus = 'pending',
+  payments = [],
+  openRequests = [],
+  leaseDocumentName = '',
+  leaseUploadDate = '',
+  onDownloadLease,
+  onSubmitMaintenance,
+}: TenantPortalProps) {
+  const openRequestsCount = openRequests.length
+
+  const lastPayment = payments.find((p) => p.status === 'paid')
+  const lastPaymentAmount = lastPayment
+    ? `${(lastPayment.amount / 1000000).toFixed(1)}M`
+    : '—'
+  const lastPaymentDate = lastPayment
+    ? new Date(lastPayment.date).toLocaleDateString('en-UG', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : 'No payments yet'
 
   return (
     <div className="min-h-screen bg-background">
@@ -81,17 +94,23 @@ export default function TenantPortal() {
           <CardContent className="space-y-3">
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Address</p>
-              <p className="text-lg font-semibold text-foreground">{propertyAddress}</p>
+              <p className="text-lg font-semibold text-foreground">
+                {propertyAddress || <span className="text-muted-foreground">—</span>}
+              </p>
             </div>
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Monthly Rent</p>
               <p className="text-lg font-semibold text-foreground">
-                {(rentalAmount / 1000000).toFixed(1)}M UGX
+                {rentalAmount
+                  ? `${(rentalAmount / 1000000).toFixed(1)}M UGX`
+                  : <span className="text-muted-foreground">—</span>}
               </p>
             </div>
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Lease Expires</p>
-              <p className="text-lg font-semibold text-foreground">{leaseExpiryDate}</p>
+              <p className="text-lg font-semibold text-foreground">
+                {leaseExpiryDate || <span className="text-muted-foreground">—</span>}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -106,11 +125,15 @@ export default function TenantPortal() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Name</p>
-              <p className="text-lg font-semibold text-foreground">{landlordName}</p>
+              <p className="text-lg font-semibold text-foreground">
+                {landlordName || <span className="text-muted-foreground">—</span>}
+              </p>
             </div>
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Contact</p>
-              <p className="text-lg font-semibold text-foreground font-mono">{landlordPhone}</p>
+              <p className="text-lg font-semibold text-foreground font-mono">
+                {landlordPhone || <span className="text-muted-foreground">—</span>}
+              </p>
             </div>
             <Button variant="outline" className="w-full flex items-center justify-center gap-2 mt-2">
               <Phone className="w-4 h-4" />
@@ -135,8 +158,8 @@ export default function TenantPortal() {
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-sm text-muted-foreground mb-1">Last Payment</p>
-              <p className="text-3xl font-bold text-foreground">1.5M</p>
-              <p className="text-xs text-muted-foreground mt-1">May 20, 2024</p>
+              <p className="text-3xl font-bold text-foreground">{lastPaymentAmount}</p>
+              <p className="text-xs text-muted-foreground mt-1">{lastPaymentDate}</p>
             </div>
           </CardContent>
         </Card>
@@ -145,7 +168,11 @@ export default function TenantPortal() {
             <div className="text-center">
               <p className="text-sm text-muted-foreground mb-1">Lease Status</p>
               <Badge className="mt-2 bg-green-100 text-green-800">Active</Badge>
-              <p className="text-xs text-muted-foreground mt-2">8 months remaining</p>
+              {leaseExpiryDate && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Expires {leaseExpiryDate}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -159,32 +186,27 @@ export default function TenantPortal() {
             rentAmount={rentalAmount}
             dueDate="1st of every month"
             currency="UGX"
-            status={currentRentStatus as any}
+            status={currentRentStatus}
           />
 
           <LeaseDocumentCard
-            documentName="Lease Agreement - Tower Road"
-            uploadDate="2024-01-14"
+            documentName={leaseDocumentName}
+            uploadDate={leaseUploadDate}
             expiryDate={leaseExpiryDate}
-            onDownload={() => {
-              // Handle download
-              console.log('Downloading lease document...')
-            }}
+            onDownload={onDownloadLease ?? (() => {})}
           />
         </div>
 
         {/* Middle Column - Payment History & Maintenance */}
         <div className="lg:col-span-2 space-y-6">
           <PaymentHistoryCard
-            payments={mockPayments}
+            payments={payments}
             currency="UGX"
           />
 
           <MaintenanceRequestForm
             propertyAddress={propertyAddress}
-            onSubmit={(data) => {
-              console.log('Maintenance request submitted:', data)
-            }}
+            onSubmit={onSubmitMaintenance ?? ((data) => console.log('Maintenance request submitted:', data))}
           />
         </div>
       </div>
@@ -199,7 +221,7 @@ export default function TenantPortal() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {mockOpenRequests.map((request) => (
+              {openRequests.map((request) => (
                 <div
                   key={request.id}
                   className="p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors"
@@ -238,7 +260,8 @@ export default function TenantPortal() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-foreground">
           <p>
-            • Rent is due on the <strong>1st of every month</strong> at the address: {propertyAddress}
+            • Rent is due on the <strong>1st of every month</strong>
+            {propertyAddress && <> at the address: {propertyAddress}</>}
           </p>
           <p>
             • You can pay rent using <strong>MTN Mobile Money, Airtel Money, or Bank Transfer</strong>
@@ -246,12 +269,13 @@ export default function TenantPortal() {
           <p>
             • For urgent maintenance issues outside business hours, please call your landlord directly
           </p>
-          <p>
-            • Your lease agreement is valid until <strong>{leaseExpiryDate}</strong>
-          </p>
+          {leaseExpiryDate && (
+            <p>
+              • Your lease agreement is valid until <strong>{leaseExpiryDate}</strong>
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
   )
 }
-
