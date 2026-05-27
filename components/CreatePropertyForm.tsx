@@ -81,6 +81,11 @@ export default function CreatePropertyForm() {
       )}
 
       <form action={formAction} className="space-y-6">
+        {state?.error && (
+  <div className="p-3 bg-red-100 text-red-700 rounded text-sm">
+    {state.error}
+  </div>
+)}
         {/* Hidden photos field */}
         <input type="hidden" name="photos" value={JSON.stringify(photos)} />
 
