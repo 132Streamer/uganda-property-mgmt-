@@ -12,7 +12,7 @@ const navLinks = [
   { href: '/tenant/lease', label: 'Lease' },
   { href: '/tenant/messages', label: 'Messages' },
   { href: '/tenant/maintenance-requests', label: 'Maintenance Requests' },
-  { href: '/tenant/payments', label: 'Payments' },
+  { href: '/tenant/rent-payments', label: 'Rent Payments' },
 ]
 
 export function Sidebar() {
