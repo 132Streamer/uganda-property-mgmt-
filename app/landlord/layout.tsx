@@ -1,8 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { Menu } from 'lucide-react'
-import { useState } from 'react'
 
 export const metadata: Metadata = {
   title: 'Landlord - PropertyHub',
@@ -14,24 +12,11 @@ export default function LandlordLayout({
 }: {
   children: React.ReactNode
 }) {
-  const [isOpen, setIsOpen] = useState(false)
-
   return (
-    <div className="flex">
-  {/* Overlay for mobile */}
-  {isOpen && (
-    <div
-      className="fixed inset-0 bg-black/50 z-20 lg:hidden"
-      onClick={() => setIsOpen(false)}
-    />
-  )}  
-     {/* Sidebar */}
-  <aside className={`
-    fixed left-0 top-0 h-screen w-64 z-30 bg-white transition-transform duration-300
-    ${isOpen ? 'translate-x-0' : '-translate-x-full'}
-    lg:translate-x-0
-  `}>
-    <Link href="/landlord/dashboard" className="text-xl font-bold text-foreground mb-8">
+    <div className="min-h-screen bg-background">
+      {/* Sidebar */}
+      <aside className="fixed left-0 top-0 w-64 h-screen bg-card border-r border-border p-6 flex flex-col">
+        <Link href="/landlord/dashboard" className="text-xl font-bold text-foreground mb-8">
           PropertyHub
         </Link>
         <nav className="space-y-2 flex-1">
@@ -71,18 +56,12 @@ export default function LandlordLayout({
             Logout
           </Button>
         </div>
-  </aside>
+      </aside>
+
       {/* Main Content */}
-      <main className="flex-1 lg:ml-64">
-    {/* Mobile top bar */}
-    <div className="lg:hidden flex items-center p-4 border-b">
-      <button onClick={() => setIsOpen(true)}>
-        <Menu className="h-6 w-6" />
-      </button>
-      <h1 className="ml-4 font-semibold">PropertyHub</h1>
-    </div>
-    {children}
-  </main>
+      <main className="ml-64 p-8">
+        {children}
+      </main>
     </div>
   )
 }
