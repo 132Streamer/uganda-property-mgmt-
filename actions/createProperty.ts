@@ -74,7 +74,7 @@ export async function createProperty(
       error: "Title, address, district, city, and monthly rent are required.",
     };
   }
-
+console.log("Inserting property for landlord:", user.id, { title, address, district, city, monthly_rent });
   // 5. Insert into properties table
   const { data, error: insertError } = await supabase
     .from("properties")
