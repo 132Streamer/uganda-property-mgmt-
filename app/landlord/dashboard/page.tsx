@@ -181,15 +181,16 @@ export default function LandlordDashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mb-8 space-y-2">
+      <div className="px-4 md:px-6 lg:px-8">
+       <div className="mb-8 space-y-2">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-foreground">Dashboard</h1>
+            <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold text-foreground">Dashboard</h1>
             <p className="text-muted-foreground mt-2">
               Welcome back! Here's your property overview for <span className="font-medium">Uganda</span>
             </p>
           </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
             <Calendar className="w-4 h-4" />
             {new Date().toLocaleDateString('en-UG', {
               weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -198,7 +199,7 @@ export default function LandlordDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-8">
         <StatCard
           label="Total Properties"
           value={stats.totalProperties}
@@ -225,8 +226,8 @@ export default function LandlordDashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mb-8">
+         <div className="md:col-span-2">
           <IncomeChartCard data={incomeData} currency="UGX" />
         </div>
         <div>
@@ -319,6 +320,7 @@ export default function LandlordDashboard() {
           </Card>
         </Link>
       </div>
+    </div>
     </div>
   )
 }
