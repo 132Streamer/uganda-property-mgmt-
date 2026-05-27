@@ -76,7 +76,7 @@ export default function TenantPortal({
     <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-4xl font-bold text-foreground">Your Rental Portal</h1>
+        <h1 className="text-2xl md:text-4xl font-bold text-foreground">Your Rental Portal</h1>
         <p className="text-muted-foreground mt-2">
           Manage your rent payments, maintenance requests, and lease details
         </p>
@@ -149,7 +149,7 @@ export default function TenantPortal({
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-sm text-muted-foreground mb-1">Open Requests</p>
-              <p className="text-3xl font-bold text-foreground">{openRequestsCount}</p>
+              <p className="text-2xl md:text-3xl font-bold text-foreground">{openRequestsCount}</p>
               <p className="text-xs text-muted-foreground mt-1">Maintenance pending</p>
             </div>
           </CardContent>
@@ -158,7 +158,7 @@ export default function TenantPortal({
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-sm text-muted-foreground mb-1">Last Payment</p>
-              <p className="text-3xl font-bold text-foreground">{lastPaymentAmount}</p>
+              <p className="text-2xl md:text-3xl font-bold text-foreground">{lastPaymentAmount}</p>
               <p className="text-xs text-muted-foreground mt-1">{lastPaymentDate}</p>
             </div>
           </CardContent>
