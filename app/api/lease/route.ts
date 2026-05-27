@@ -1,27 +1,39 @@
-import { createBrowserClient } from "@supabase/ssr";
+import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const BUCKET = 'lease-docs'
 
+async function createSupabaseClient() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll() },
+        setAll(cookiesToSet: { name: any; value: any; options: any }[]) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+}
+
 // POST /api/lease — landlord uploads PDF
 export async function POST(req: NextRequest) {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = await createSupabaseClient()
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) {
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const formData = await req.formData()
-  const file = formData.get('file') as File | null
+  const file      = formData.get('file') as File | null
   const tenancyId = formData.get('tenancy_id') as string | null
 
   if (!file || !tenancyId) {
@@ -39,33 +51,28 @@ export async function POST(req: NextRequest) {
   // Verify landlord owns this tenancy
   const { data: tenancy, error: tenancyError } = await supabase
     .from('tenancies')
-    .select('id, property_id')
+    .select('id, property_id, landlord_id')
     .eq('id', tenancyId)
+    .eq('landlord_id', user.id)
     .single()
 
   if (tenancyError || !tenancy) {
-    return NextResponse.json({ error: 'Tenancy not found' }, { status: 404 })
+    return NextResponse.json({ error: 'Tenancy not found or forbidden' }, { status: 404 })
   }
 
-  const { data: property } = await supabase
-    .from('properties')
-    .select('id, landlord_id')
-    .eq('id', tenancy.property_id)
-    .eq('landlord_id', session.user.id)
+  // Get tenant_id for the lease_documents record
+  const { data: tenancyFull } = await supabase
+    .from('tenancies')
+    .select('tenant_id')
+    .eq('id', tenancyId)
     .single()
 
-  if (!property) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
-  const fileExt = 'pdf'
-  const fileName = `${tenancyId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}.${fileExt}`
+  const fileName = `${tenancyId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
   const arrayBuffer = await file.arrayBuffer()
-  const fileBuffer = new Uint8Array(arrayBuffer)
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
-    .upload(fileName, fileBuffer, {
+    .upload(fileName, new Uint8Array(arrayBuffer), {
       contentType: 'application/pdf',
       upsert: false,
     })
@@ -74,20 +81,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: uploadError.message }, { status: 500 })
   }
 
+  const { data: { publicUrl } } = supabase.storage.from(BUCKET).getPublicUrl(fileName)
+
+  // Insert into lease_documents — matches schema exactly
   const { data: record, error: dbError } = await supabase
     .from('lease_documents')
     .insert({
-      tenancy_id: tenancyId,
-      file_name: file.name,
-      storage_path: fileName,
-      uploaded_by: session.user.id,
-      file_size: file.size,
+      tenancy_id:  tenancyId,
+      landlord_id: user.id,
+      tenant_id:   tenancyFull?.tenant_id,
+      file_url:    publicUrl,
+      file_name:   file.name,
     })
     .select()
     .single()
 
   if (dbError) {
-    // Rollback storage upload
     await supabase.storage.from(BUCKET).remove([fileName])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
@@ -95,43 +104,34 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ data: record }, { status: 201 })
 }
 
-// GET /api/lease?tenancy_id=xxx — tenant fetches their lease docs
+// GET /api/lease?tenancy_id=xxx — tenant or landlord fetches lease docs
 export async function GET(req: NextRequest) {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = await createSupabaseClient()
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) {
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { searchParams } = new URL(req.url)
-  const tenancyId = searchParams.get('tenancy_id')
-
+  const tenancyId = new URL(req.url).searchParams.get('tenancy_id')
   if (!tenancyId) {
     return NextResponse.json({ error: 'tenancy_id required' }, { status: 400 })
   }
 
-  // Verify tenant belongs to this tenancy
+  // Verify user belongs to this tenancy (as tenant or landlord)
   const { data: tenancy } = await supabase
     .from('tenancies')
-    .select('id')
+    .select('id, tenant_id, landlord_id')
     .eq('id', tenancyId)
-    .eq('tenant_id', session.user.id)
     .single()
 
-  if (!tenancy) {
+  if (!tenancy || (tenancy.tenant_id !== user.id && tenancy.landlord_id !== user.id)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const { data: documents, error } = await supabase
     .from('lease_documents')
-    .select('id, file_name, storage_path, file_size, created_at')
+    .select('id, file_name, file_url, uploaded_at, created_at')
     .eq('tenancy_id', tenancyId)
     .order('created_at', { ascending: false })
 

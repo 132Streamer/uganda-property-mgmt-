@@ -4,17 +4,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
 const UpdatePropertySchema = z.object({
-  title: z.string().min(1).optional(),
-  description: z.string().optional(),
-  district: z.string().min(1).optional(),
-  address: z.string().min(1).optional(),
-  rent_ugx: z.number().positive().optional(),
-  bedrooms: z.number().int().min(0).optional(),
-  bathrooms: z.number().int().min(0).optional(),
-  property_type: z.enum(['apartment', 'house', 'studio', 'commercial', 'land']).optional(),
-  status: z.enum(['available', 'occupied', 'maintenance']).optional(),
-  amenities: z.array(z.string()).optional(),
-  photos: z.array(z.string().url()).optional(),
+  title:         z.string().min(1).optional(),
+  description:   z.string().optional(),
+  district:      z.string().min(1).optional(),
+  city:          z.string().min(1).optional(),
+  address:       z.string().min(1).optional(),
+  monthly_rent:  z.number().positive().optional(),
+  bedrooms:      z.number().int().min(0).optional(),
+  bathrooms:     z.number().int().min(0).optional(),
+  property_type: z.string().optional(),
+  status:        z.enum(['available', 'occupied', 'maintenance']).optional(),
+  photos:        z.array(z.string()).optional(),
 })
 
 async function createSupabaseClient() {
@@ -24,9 +24,12 @@ async function createSupabaseClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) { return cookieStore.get(name)?.value },
-        set(name: string, value: string, options: Record<string, unknown>) { cookieStore.set({ name, value, ...options }) },
-        remove(name: string, options: Record<string, unknown>) { cookieStore.set({ name, value: '', ...options }) },
+        getAll() { return cookieStore.getAll() },
+        setAll(cookiesToSet: { name: any; value: any; options: any }[]) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          )
+        },
       },
     }
   )
@@ -47,10 +50,10 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     .select(`
       *,
       units (
-        id, unit_number, floor, rent_ugx, status,
+        id, unit_number, floor, monthly_rent, status,
         tenancies (
-          id, start_date, end_date, status,
-          tenant:profiles ( id, full_name, email, phone )
+          id, start_date, end_date, status, monthly_rent,
+          tenant:profiles!tenancies_tenant_id_fkey ( id, full_name, phone )
         )
       )
     `)
@@ -90,7 +93,6 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
   }
 
-  // Verify ownership first
   const { data: existing } = await supabase
     .from('properties')
     .select('id')
@@ -120,7 +122,6 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Check no active tenancies exist
   const { data: activeUnits } = await supabase
     .from('units')
     .select('id, tenancies(id, status)')

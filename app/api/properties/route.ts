@@ -1,29 +1,46 @@
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { z } from 'zod'
-import { title } from 'process'
 
 const CreatePropertySchema = z.object({
-  title: z.string().min(1, 'Name is required'),
+  title: z.string().min(1, 'Title is required'),
   address: z.string().min(1, 'Address is required'),
   district: z.string().min(1, 'District is required'),
+  city: z.string().min(1, 'City is required'),
   description: z.string().optional(),
-  rent_ugx: z.number().positive('Rent must be positive'),
-  bedrooms: z.number().int().min(0),
-  bathrooms: z.number().int().min(0),
-  property_type: z.enum(['apartment', 'house', 'studio', 'commercial', 'land']),
-  amenities: z.array(z.string()).optional().default([]),
+  monthly_rent: z.number().positive('Rent must be positive'),
+  bedrooms: z.number().int().min(0).optional(),
+  bathrooms: z.number().int().min(0).optional(),
+  property_type: z.string().optional(),
   photos: z.array(z.string()).optional().default([]),
 })
 
+async function createSupabaseClient() {
+  const cookieStore = await cookies()
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll() },
+        setAll(cookiesToSet: { name: any; value: any; options: any }[]) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
-
   const district  = searchParams.get('district')
   const bedrooms  = searchParams.get('bedrooms')
   const max_price = searchParams.get('max_price')
 
-  const supabase = await createClient()
+  const supabase = await createSupabaseClient()
 
   let query = supabase
     .from('properties')
@@ -45,8 +62,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (max_price) {
-    // FIX: was 'price_ugx' — correct column is 'rent_ugx'
-    query = query.lte('rent_ugx', parseInt(max_price))
+    query = query.lte('monthly_rent', parseInt(max_price))
   }
 
   const { data, error } = await query
@@ -60,15 +76,13 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
+  const supabase = await createSupabaseClient()
 
-  // Verify authenticated landlord
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Verify user has landlord role
   const { data: profile } = await supabase
     .from('profiles')
     .select('role')
@@ -95,23 +109,23 @@ export async function POST(request: NextRequest) {
   }
 
   const { data, error } = await supabase
-  .from('properties')
-  .insert({
-    landlord_id: user.id,
-    title: parsed.data.title,          // was: name
-    description: parsed.data.description,
-    address: parsed.data.address,
-    district: parsed.data.district,
-    city: parsed.data.district,        // city is required in DB — using district as fallback
-    monthly_rent: parsed.data.rent_ugx, // was: rent_ugx (wrong column name)
-    bedrooms: parsed.data.bedrooms,
-    bathrooms: parsed.data.bathrooms,
-    property_type: parsed.data.property_type,
-    photos: parsed.data.photos,
-    status: 'available',
-  })
-  .select()
-  .single()
+    .from('properties')
+    .insert({
+      landlord_id:  user.id,
+      title:        parsed.data.title,
+      description:  parsed.data.description ?? null,
+      address:      parsed.data.address,
+      district:     parsed.data.district,
+      city:         parsed.data.city,
+      monthly_rent: parsed.data.monthly_rent,
+      bedrooms:     parsed.data.bedrooms ?? null,
+      bathrooms:    parsed.data.bathrooms ?? null,
+      property_type: parsed.data.property_type ?? null,
+      photos:       parsed.data.photos,
+      status:       'available',
+    })
+    .select()
+    .single()
 
   if (error) {
     console.error('Property creation error:', error)
