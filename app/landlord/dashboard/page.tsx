@@ -77,13 +77,26 @@ export default function LandlordDashboard() {
 
       const pendingMaintenance = pendingReqs?.length ?? 0
 
-      // Recent payments — correct columns: amount, payment_date (not amount_ugx, paid_at)
+      // Recent payments — now sourced from payments + invoices
+      // (rent_payments was never migrated; invoices/property_units/
+      // payments is the schema the Pesapal/guest-pay flow uses).
       const { data: recentPayments } = await supabase
-        .from('rent_payments')
-        .select('id, amount, payment_date, created_at, status, tenant_id, tenancy_id')
-        .eq('landlord_id', landlordId)
-        .eq('status', 'completed')
-        .order('payment_date', { ascending: false })
+        .from('payments')
+        .select(
+          `
+          id, amount, status, paid_at, created_at, is_guest_payment, guest_name,
+          invoices!inner (
+            tenant_id,
+            tenants:profiles!invoices_tenant_id_fkey ( full_name ),
+            property_units!inner (
+              properties!inner ( title, landlord_id )
+            )
+          )
+        `
+        )
+        .eq('invoices.property_units.properties.landlord_id', landlordId)
+        .eq('status', 'paid')
+        .order('paid_at', { ascending: false })
         .limit(5)
 
       // Monthly income (current month)
@@ -91,11 +104,11 @@ export default function LandlordDashboard() {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
       const { data: monthPayments } = await supabase
-        .from('rent_payments')
-        .select('amount')
-        .eq('landlord_id', landlordId)
-        .eq('status', 'completed')
-        .gte('payment_date', monthStart)
+        .from('payments')
+        .select('amount, invoices!inner(property_units!inner(properties!inner(landlord_id)))')
+        .eq('invoices.property_units.properties.landlord_id', landlordId)
+        .eq('status', 'paid')
+        .gte('paid_at', monthStart)
 
       const monthlyIncome = monthPayments?.reduce((sum, p) => sum + (p.amount ?? 0), 0) ?? 0
 
@@ -112,12 +125,12 @@ export default function LandlordDashboard() {
       const incomeByMonth = await Promise.all(
         months.map(async ({ label, start, end }) => {
           const { data } = await supabase
-            .from('rent_payments')
-            .select('amount')
-            .eq('landlord_id', landlordId)
-            .eq('status', 'completed')
-            .gte('payment_date', start)
-            .lt('payment_date', end)
+            .from('payments')
+            .select('amount, invoices!inner(property_units!inner(properties!inner(landlord_id)))')
+            .eq('invoices.property_units.properties.landlord_id', landlordId)
+            .eq('status', 'paid')
+            .gte('paid_at', start)
+            .lt('paid_at', end)
           const income = data?.reduce((sum, p) => sum + (p.amount ?? 0), 0) ?? 0
           return { month: label, income }
         })
@@ -141,12 +154,12 @@ export default function LandlordDashboard() {
         totalUnits,
       })
       setPayments(
-        (recentPayments ?? []).map(p => ({
+        (recentPayments ?? []).map((p: any) => ({
           id:       p.id,
-          tenant:   p.tenant_id,
-          property: '—',
+          tenant:   p.is_guest_payment ? (p.guest_name ?? 'Guest') : (p.invoices?.tenants?.full_name ?? '—'),
+          property: p.invoices?.property_units?.properties?.title ?? '—',
           amount:   p.amount,
-          date:     p.payment_date ?? p.created_at,
+          date:     p.paid_at ?? p.created_at,
           status:   'paid',
         }))
       )
