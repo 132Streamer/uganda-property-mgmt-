@@ -1,244 +1,152 @@
-'use client'
+import { notFound } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowLeft, Building2, MapPin, Users, Banknote, CalendarDays } from 'lucide-react'
 
-import { useEffect, useRef, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Upload, FileText, Loader2, AlertCircle } from 'lucide-react'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { format } from 'date-fns'
 
-interface Tenancy {
-  id: string
-  tenant_name: string
-  start_date: string
-  end_date: string | null
-}
+import { PropertyFormDialog } from '@/components/properties/property-form-dialog'
+import { DeletePropertyButton } from '@/components/properties/delete-property-button'
+import { getProperty } from '@/lib/actions/properties'
+import {
+  PROPERTY_TYPE_LABELS,
+  PROPERTY_STATUS_LABELS,
+  STATUS_BADGE_VARIANTS,
+  formatUGX,
+} from '@/lib/types/property'
 
-interface LeaseDocument {
-  id: string
-  file_name: string
-  file_size: number
-  created_at: string
-  storage_path: string
-}
+export const dynamic = 'force-dynamic'
 
-interface TenancyWithLeases extends Tenancy {
-  leases: LeaseDocument[]
-  uploading: boolean
-  error: string | null
-}
-
-interface Props {
+interface PropertyDetailPageProps {
   params: { id: string }
 }
 
-export default function PropertyPage({ params }: Props) {
-  const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
-  const [tenancies, setTenancies] = useState<TenancyWithLeases[]>([])
-  const [loading, setLoading] = useState(true)
-  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
-
-  useEffect(() => {
-    fetchTenancies()
-  }, [params.id])
-
-  async function fetchTenancies() {
-    setLoading(true)
-    const { data, error } = await supabase
-      .from('tenancies')
-      .select(`
-        id,
-        tenant_name,
-        start_date,
-        end_date,
-        lease_documents (
-          id,
-          file_name,
-          file_size,
-          created_at,
-          storage_path
-        )
-      `)
-      .eq('property_id', params.id)
-      .order('start_date', { ascending: false })
-
-    if (!error && data) {
-      setTenancies(
-        data.map((t: any) => ({
-          ...t,
-          leases: t.lease_documents ?? [],
-          uploading: false,
-          error: null,
-        }))
-      )
-    }
-    setLoading(false)
+export default async function PropertyDetailPage({ params }: PropertyDetailPageProps) {
+  let property
+  try {
+    property = await getProperty(params.id)
+  } catch {
+    notFound()
   }
 
-  function setTenancyState(tenancyId: string, patch: Partial<TenancyWithLeases>) {
-    setTenancies((prev) =>
-      prev.map((t) => (t.id === tenancyId ? { ...t, ...patch } : t))
-    )
-  }
-
-  async function handleFileChange(tenancyId: string, e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    e.target.value = ''
-
-    if (file.type !== 'application/pdf') {
-      setTenancyState(tenancyId, { error: 'PDF files only' })
-      return
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setTenancyState(tenancyId, { error: 'File exceeds 10MB limit' })
-      return
-    }
-
-    setTenancyState(tenancyId, { uploading: true, error: null })
-
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('tenancy_id', tenancyId)
-
-    const res = await fetch('/api/lease', { method: 'POST', body: formData })
-    const json = await res.json()
-
-    if (!res.ok) {
-      setTenancyState(tenancyId, { uploading: false, error: json.error ?? 'Upload failed' })
-      return
-    }
-
-    setTenancies((prev) =>
-      prev.map((t) =>
-        t.id === tenancyId
-          ? {
-              ...t,
-              uploading: false,
-              leases: [
-                {
-                  id: json.data.id,
-                  file_name: json.data.file_name,
-                  file_size: json.data.file_size,
-                  created_at: json.data.created_at,
-                  storage_path: json.data.storage_path,
-                },
-                ...t.leases,
-              ],
-            }
-          : t
-      )
-    )
-  }
-
-  function formatBytes(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
+  const totalMonthlyRent = property.rent_amount * property.units
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
-      <h1 className="text-2xl font-semibold">Property Leases</h1>
+    <div className="p-6 space-y-6 max-w-4xl">
+      {/* ── Back + Actions bar ─────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href="/landlord/properties">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Properties
+          </Link>
+        </Button>
 
-      {tenancies.length === 0 && (
-        <p className="text-muted-foreground text-sm">No tenancies found for this property.</p>
-      )}
+        <div className="flex items-center gap-2">
+          <PropertyFormDialog property={property} />
+          <DeletePropertyButton id={property.id} name={property.name} />
+        </div>
+      </div>
 
-      {tenancies.map((tenancy) => (
-        <Card key={tenancy.id}>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-medium">{tenancy.tenant_name}</CardTitle>
-              <Badge variant="outline" className="text-xs">
-                {tenancy.end_date ? 'Past' : 'Active'}
-              </Badge>
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{property.name}</h1>
+          <p className="text-muted-foreground flex items-center gap-1 mt-1">
+            <MapPin className="h-4 w-4" />
+            {property.address}, {property.city}
+          </p>
+        </div>
+        <Badge variant={STATUS_BADGE_VARIANTS[property.status]} className="shrink-0">
+          {PROPERTY_STATUS_LABELS[property.status]}
+        </Badge>
+      </div>
+
+      {/* ── Key Metrics ────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="pt-5">
+            <Building2 className="h-5 w-5 text-muted-foreground mb-2" />
+            <p className="text-xs text-muted-foreground">Type</p>
+            <p className="font-semibold">{PROPERTY_TYPE_LABELS[property.property_type]}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <Users className="h-5 w-5 text-muted-foreground mb-2" />
+            <p className="text-xs text-muted-foreground">Units</p>
+            <p className="font-semibold">{property.units}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <Banknote className="h-5 w-5 text-muted-foreground mb-2" />
+            <p className="text-xs text-muted-foreground">Rent / Unit</p>
+            <p className="font-semibold">{formatUGX(property.rent_amount)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-5">
+            <Banknote className="h-5 w-5 text-muted-foreground mb-2" />
+            <p className="text-xs text-muted-foreground">Monthly Total</p>
+            <p className="font-semibold">{formatUGX(totalMonthlyRent)}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Details Card ───────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Property Details</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <p className="text-muted-foreground">Full Address</p>
+              <p className="font-medium">{property.address}</p>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {format(new Date(tenancy.start_date), 'dd MMM yyyy')}
-              {tenancy.end_date && ` – ${format(new Date(tenancy.end_date), 'dd MMM yyyy')}`}
-            </p>
-          </CardHeader>
+            <div>
+              <p className="text-muted-foreground">City / Town</p>
+              <p className="font-medium">{property.city}</p>
+            </div>
+          </div>
+
+          {property.description && (
+            <>
+              <Separator />
+              <div>
+                <p className="text-muted-foreground text-sm mb-1">Description</p>
+                <p className="text-sm">{property.description}</p>
+              </div>
+            </>
+          )}
 
           <Separator />
 
-          <CardContent className="pt-4 space-y-4">
-            <div className="flex items-center gap-3">
-              <input
-                ref={(el) => { fileInputRefs.current[tenancy.id] = el }}
-                type="file"
-                accept="application/pdf"
-                className="hidden"
-                onChange={(e) => handleFileChange(tenancy.id, e)}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={tenancy.uploading}
-                onClick={() => fileInputRefs.current[tenancy.id]?.click()}
-              >
-                {tenancy.uploading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Uploading…
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Lease PDF
-                  </>
-                )}
-              </Button>
-              <span className="text-xs text-muted-foreground">PDF · max 10MB</span>
-            </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <CalendarDays className="h-4 w-4" />
+            Added {new Date(property.created_at).toLocaleDateString('en-UG', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
-            {tenancy.error && (
-              <Alert variant="destructive" className="py-2">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription className="text-xs">{tenancy.error}</AlertDescription>
-              </Alert>
-            )}
-
-            {tenancy.leases.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Uploaded Documents
-                </p>
-                {tenancy.leases.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="flex items-center gap-3 rounded-md border px-3 py-2"
-                  >
-                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate font-medium">{doc.file_name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {format(new Date(doc.created_at), 'dd MMM yyyy, HH:mm')} ·{' '}
-                        {formatBytes(doc.file_size)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+      {/* ── Placeholder: Tenants linked to this property ───────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Tenants</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Tenant management for this property coming soon.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   )
 }
