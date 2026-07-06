@@ -1,213 +1,218 @@
-'use client'
-export const dynamic = 'force-dynamic';
-import { useState } from 'react'
+import { Users, Building2, CalendarClock, AlertTriangle } from 'lucide-react'
+import Link from 'next/link'
 
-interface InviteForm {
-  tenant_email: string
-  property_id: string
-  unit_id: string
-  monthly_rent: string
-  start_date: string
-}
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
-const initialForm: InviteForm = {
-  tenant_email: '',
-  property_id: '',
-  unit_id: '',
-  monthly_rent: '',
-  start_date: '',
-}
+import { TenantFormDialog } from '@/components/tenants/tenant-form-dialog'
+import { DeleteTenantButton } from '@/components/tenants/delete-tenant-button'
+import { getTenants } from '@/lib/actions/tenants'
+import { getProperties } from '@/lib/actions/properties'
+import {
+  TENANT_STATUS_LABELS,
+  TENANT_STATUS_BADGE_VARIANTS,
+  leaseLabel,
+  isLeaseExpired,
+  type TenantWithProperty,
+} from '@/lib/types/tenant'
+import { formatUGX } from '@/lib/types/property'
 
-export default function TenantsPage() {
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [form, setForm] = useState<InviteForm>(initialForm)
-  const [submitting, setSubmitting] = useState(false)
-  const [success, setSuccess] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+export const dynamic = 'force-dynamic'
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setForm(f => ({ ...f, [e.target.name]: e.target.value }))
+export default async function TenantsPage() {
+  let tenants: TenantWithProperty[] = []
+  let properties: { id: string; name: string; city: string }[] = []
+  let fetchError: string | null = null
+
+  try {
+    ;[tenants, properties] = await Promise.all([getTenants(), getProperties()])
+  } catch (err) {
+    fetchError = err instanceof Error ? err.message : 'Failed to load tenants'
   }
 
-  async function handleInvite(e: React.FormEvent) {
-    e.preventDefault()
-    setSubmitting(true)
-    setError(null)
-
-    try {
-      const res = await fetch('/api/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          monthly_rent: parseFloat(form.monthly_rent),
-        }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error ?? 'Failed to send invitation')
-      }
-
-      setSuccess(true)
-      setForm(initialForm)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  function closeDialog() {
-    setDialogOpen(false)
-    setSuccess(false)
-    setError(null)
-    setForm(initialForm)
-  }
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  const activeCount = tenants.filter((t) => t.status === 'active').length
+  const expiredLeases = tenants.filter((t) => isLeaseExpired(t.lease_end)).length
+  const totalRent = tenants
+    .filter((t) => t.status === 'active')
+    .reduce((sum, t) => sum + t.rent_amount, 0)
 
   return (
-    <div className="p-8">
-      {/* Page header */}
-      <div className="flex items-center justify-between mb-8">
+    <div className="p-6 space-y-6">
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Tenants</h1>
-          <p className="text-sm text-gray-500 mt-1">Manage and invite tenants to your units.</p>
+          <h1 className="text-2xl font-bold tracking-tight">Tenants</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Manage all tenants across your properties
+          </p>
         </div>
-        <button
-          onClick={() => setDialogOpen(true)}
-          className="bg-gray-900 text-white text-sm font-semibold px-4 py-2.5 rounded-lg hover:bg-gray-700 transition"
-        >
-          + Invite Tenant
-        </button>
+        <TenantFormDialog properties={properties} />
       </div>
 
-      {/* Tenant list placeholder */}
-      <div className="border border-dashed border-gray-200 rounded-xl p-12 text-center">
-        <p className="text-gray-400 text-sm">No tenants yet. Invite one to get started.</p>
+      {/* ── Summary Cards ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="pt-6 flex items-center gap-4">
+            <Users className="h-8 w-8 text-muted-foreground shrink-0" />
+            <div>
+              <p className="text-sm text-muted-foreground">Active Tenants</p>
+              <p className="text-2xl font-bold">{activeCount}</p>
+              <p className="text-xs text-muted-foreground">{tenants.length} total</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6 flex items-center gap-4">
+            <Building2 className="h-8 w-8 text-muted-foreground shrink-0" />
+            <div>
+              <p className="text-sm text-muted-foreground">Monthly Rent (Active)</p>
+              <p className="text-2xl font-bold">{formatUGX(totalRent)}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6 flex items-center gap-4">
+            <CalendarClock
+              className={`h-8 w-8 shrink-0 ${expiredLeases > 0 ? 'text-destructive' : 'text-muted-foreground'}`}
+            />
+            <div>
+              <p className="text-sm text-muted-foreground">Expired Leases</p>
+              <p className={`text-2xl font-bold ${expiredLeases > 0 ? 'text-destructive' : ''}`}>
+                {expiredLeases}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Dialog overlay */}
-      {dialogOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
-          onClick={e => { if (e.target === e.currentTarget) closeDialog() }}
-        >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8 space-y-6">
-            {success ? (
-              <div className="text-center space-y-4 py-4">
-                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto">
-                  <svg className="w-6 h-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Invitation Sent</h2>
-                  <p className="text-sm text-gray-500 mt-1">Tenant will receive an email with invite link.</p>
-                </div>
-                <button
-                  onClick={closeDialog}
-                  className="w-full bg-gray-900 text-white rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-gray-700 transition"
-                >
-                  Done
-                </button>
-              </div>
-            ) : (
-              <>
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900">Invite Tenant</h2>
-                  <p className="text-sm text-gray-500 mt-1">Send an invitation link to a prospective tenant.</p>
-                </div>
-
-                <form onSubmit={handleInvite} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Tenant Email</label>
-                    <input
-                      type="email"
-                      name="tenant_email"
-                      required
-                      value={form.tenant_email}
-                      onChange={handleChange}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                      placeholder="tenant@example.com"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Property ID</label>
-                    <input
-                      type="text"
-                      name="property_id"
-                      required
-                      value={form.property_id}
-                      onChange={handleChange}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                      placeholder="uuid"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Unit ID</label>
-                    <input
-                      type="text"
-                      name="unit_id"
-                      required
-                      value={form.unit_id}
-                      onChange={handleChange}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                      placeholder="uuid"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Rent ($)</label>
-                    <input
-                      type="number"
-                      name="monthly_rent"
-                      required
-                      min={0}
-                      value={form.monthly_rent}
-                      onChange={handleChange}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                      placeholder="1200"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-                    <input
-                      type="date"
-                      name="start_date"
-                      required
-                      value={form.start_date}
-                      onChange={handleChange}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                    />
-                  </div>
-
-                  {error && <p className="text-sm text-red-600">{error}</p>}
-
-                  <div className="flex gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={closeDialog}
-                      className="flex-1 border border-gray-300 text-gray-700 rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-gray-50 transition"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={submitting}
-                      className="flex-1 bg-gray-900 text-white rounded-lg px-4 py-2.5 text-sm font-semibold hover:bg-gray-700 transition disabled:opacity-50"
-                    >
-                      {submitting ? 'Sending...' : 'Send Invite'}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-          </div>
+      {/* ── No properties warning ──────────────────────────────────────────── */}
+      {properties.length === 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-yellow-300 bg-yellow-50 dark:bg-yellow-950/20 p-4 text-sm text-yellow-800 dark:text-yellow-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          You need to add a property before you can add tenants.{' '}
+          <Link href="/landlord/properties" className="underline font-medium">
+            Add a property →
+          </Link>
         </div>
+      )}
+
+      {/* ── Error state ────────────────────────────────────────────────────── */}
+      {fetchError && (
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+          {fetchError}
+        </div>
+      )}
+
+      {/* ── Empty state ────────────────────────────────────────────────────── */}
+      {!fetchError && tenants.length === 0 && (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center gap-4">
+            <Users className="h-12 w-12 text-muted-foreground" />
+            <div>
+              <h3 className="font-semibold text-lg">No tenants yet</h3>
+              <p className="text-muted-foreground text-sm mt-1">
+                Add your first tenant to get started.
+              </p>
+            </div>
+            <TenantFormDialog properties={properties} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Tenants Table ──────────────────────────────────────────────────── */}
+      {tenants.length > 0 && (
+        <Card>
+          <CardHeader className="pb-0">
+            <p className="text-sm text-muted-foreground">{tenants.length} tenants</p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tenant</TableHead>
+                  <TableHead>Property / Unit</TableHead>
+                  <TableHead>Lease</TableHead>
+                  <TableHead className="text-right">Rent / Month</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tenants.map((tenant) => {
+                  const expired = isLeaseExpired(tenant.lease_end)
+                  return (
+                    <TableRow key={tenant.id}>
+                      <TableCell>
+                        <Link
+                          href={`/landlord/tenants/${tenant.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {tenant.full_name}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">{tenant.phone}</p>
+                      </TableCell>
+
+                      <TableCell>
+                        <Link
+                          href={`/landlord/properties/${tenant.property_id}`}
+                          className="text-sm hover:underline"
+                        >
+                          {tenant.properties.name}
+                        </Link>
+                        <p className="text-xs text-muted-foreground">Unit {tenant.unit_number}</p>
+                      </TableCell>
+
+                      <TableCell>
+                        <span className={`text-sm ${expired ? 'text-destructive' : ''}`}>
+                          {leaseLabel(tenant.lease_start, tenant.lease_end)}
+                        </span>
+                        {expired && (
+                          <p className="text-xs text-destructive font-medium">Expired</p>
+                        )}
+                      </TableCell>
+
+                      <TableCell className="text-right text-sm">
+                        {formatUGX(tenant.rent_amount)}
+                      </TableCell>
+
+                      <TableCell>
+                        <Badge variant={TENANT_STATUS_BADGE_VARIANTS[tenant.status]}>
+                          {TENANT_STATUS_LABELS[tenant.status]}
+                        </Badge>
+                      </TableCell>
+
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/landlord/tenants/${tenant.id}`}>View</Link>
+                          </Button>
+                          <TenantFormDialog properties={properties} tenant={tenant} />
+                          <DeleteTenantButton
+                            id={tenant.id}
+                            name={tenant.full_name}
+                            propertyId={tenant.property_id}
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   )
