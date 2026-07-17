@@ -1,5 +1,6 @@
 // app/landlord/layout.tsx
-import { Sidebar } from '@/components/landlord/SideBar'
+import { SidebarUserFooter } from '@/components/auth/sidebar-user-footer'
+
 
 export default function LandlordLayout({ children }: { children: React.ReactNode }) {
   return (
